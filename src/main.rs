@@ -203,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Esempio: coordinate di Milano (puoi modificare queste coordinate)
     let centro_lat = 45.48244707211893;
     let centro_lon = 9.23972904485661;
-    let raggio_metri = 1000.0;
+    let raggio_metri = 500.0;
 
     // Usa la nuova funzione per stampare solo gli elementi nel raggio
     stampa_elementi_in_raggio("nord-ovest-251207.osm.pbf", centro_lat, centro_lon, raggio_metri)?;
