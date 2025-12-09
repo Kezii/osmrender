@@ -1,0 +1,13 @@
+[package]
+name = "osmrender"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+osmpbf = "0.3.8"
+rayon = "1.11.0"
+image = "0.25"
+embedded-gfx = { path = "embedded-gfx" }
+embedded-graphics = "0.8"
+embedded-graphics-core = "0.4"
+nalgebra = {version = "0.32.3", default-features = false, features = [ "libm" ] }
