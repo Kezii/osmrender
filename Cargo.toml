@@ -11,3 +11,4 @@ embedded-gfx = { path = "embedded-gfx" }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 nalgebra = {version = "0.32.3", default-features = false, features = [ "libm" ] }
+earcut = "0.4.4"

@@ -1,6 +1,7 @@
 use embedded_gfx::mesh::{Geometry, K3dMesh, RenderMode};
 use embedded_graphics_core::pixelcolor::Rgb565;
 use crate::map_elements::{MapElement, ElementType};
+use earcut::Earcut;
 
 /// Struttura che mantiene tutti i dati delle mesh per garantire che i riferimenti siano validi
 /// Necessaria perché K3dMesh usa riferimenti ai dati
@@ -103,16 +104,71 @@ impl ConversionParams {
     }
 }
 
-/// Triangola un poligono usando fan triangulation
+/// Triangola un poligono usando earcut (algoritmo Ear Clipping)
+/// Gestisce correttamente poligoni convessi e concavi
 fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     if vertices.len() < 3 {
+        eprintln!("⚠️  triangola_poligono: troppo pochi vertici ({})", vertices.len());
         return Vec::new();
     }
     
-    let mut faces = Vec::new();
-    for i in 1..vertices.len() - 1 {
-        faces.push([0, i, i + 1]);
+    // Rimuovi vertici duplicati (primo = ultimo) se presenti
+    let mut vertices_clean = vertices.to_vec();
+    const EPSILON: f32 = 1e-6;
+    if vertices_clean.len() > 3 {
+        let first = &vertices_clean[0];
+        let last = &vertices_clean[vertices_clean.len() - 1];
+        if (first[0] - last[0]).abs() < EPSILON && (first[1] - last[1]).abs() < EPSILON {
+            vertices_clean.pop();
+        }
     }
+    
+    if vertices_clean.len() < 3 {
+        eprintln!("⚠️  triangola_poligono: dopo pulizia, troppo pochi vertici ({})", vertices_clean.len());
+        return Vec::new();
+    }
+    
+    // Estrai solo le coordinate X e Y (ignorando Z che è costante per ogni poligono)
+    // earcut richiede un iteratore di [f64; 2]
+    let vertices_2d: Vec<[f64; 2]> = vertices_clean
+        .iter()
+        .map(|v| [v[0] as f64, v[1] as f64])
+        .collect();
+    
+    // Nessun buco nel poligono (hole_indices vuoto)
+    let hole_indices: &[u32] = &[];
+    
+    // Triangola usando earcut
+    let mut triangles = Vec::new();
+    let mut earcut = Earcut::new();
+    earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
+    
+    if triangles.is_empty() {
+        eprintln!("⚠️  triangola_poligono: earcut ha restituito 0 triangoli per {} vertici", vertices_2d.len());
+        eprintln!("   Primi 3 vertici 2D: {:?}", vertices_2d.iter().take(3).collect::<Vec<_>>());
+        return Vec::new();
+    }
+    
+    if triangles.len() % 3 != 0 {
+        eprintln!("⚠️  triangola_poligono: numero di indici non multiplo di 3: {}", triangles.len());
+    }
+    
+    // Converti gli indici u32 in [usize; 3]
+    let mut faces = Vec::with_capacity(triangles.len() / 3);
+    for i in (0..triangles.len()).step_by(3) {
+        if i + 2 < triangles.len() {
+            faces.push([
+                triangles[i] as usize,
+                triangles[i + 1] as usize,
+                triangles[i + 2] as usize,
+            ]);
+        }
+    }
+    
+    if faces.is_empty() {
+        eprintln!("⚠️  triangola_poligono: nessuna faccia generata da {} triangoli", triangles.len());
+    }
+    
     faces
 }
 
@@ -234,10 +290,20 @@ pub fn converti_a_mesh(
             let mut vertices = Vec::new();
             for (lat, lon) in &coordinate {
                 // Ogni vertice ha Z basato sulla priorità
-                vertices.push(params.to_3d(*lat, *lon, priority));
+                let vertex = params.to_3d(*lat, *lon, priority);
+                vertices.push(vertex);
+            }
+            
+            // Debug: verifica z per edifici
+            if matches!(elemento.element_type, ElementType::Edificio) && !vertices.is_empty() {
+                let z = vertices[0][2];
+                if z < 0.01 {
+                    eprintln!("⚠️  Edificio ID {} ha z={} (priorità={}), potrebbe essere nascosto", 
+                        elemento.id(), z, priority);
+                }
             }
 
-            let is_solid = elemento.is_chiuso() && vertices.len() >= 3;
+            let mut is_solid = elemento.is_chiuso() && vertices.len() >= 3;
             
             let mut lines = Vec::new();
             let mut faces = Vec::new();
@@ -245,9 +311,25 @@ pub fn converti_a_mesh(
             
             if is_solid {
                 faces = triangola_poligono(&vertices);
-                // Per poligoni 2D, tutte le normali puntano verso l'alto (0, 0, 1)
-                for _face in &faces {
-                    normals.push([0.0, 0.0, 1.0]);
+                // Se la triangolazione fallisce, usa le linee del perimetro come fallback
+                if faces.is_empty() {
+                    eprintln!("⚠️  Triangolazione fallita per elemento ID {} (tipo: {:?}), {} vertici", 
+                        elemento.id(), elemento.element_type, vertices.len());
+                    eprintln!("   Vertici: {:?}", vertices.iter().take(5).collect::<Vec<_>>());
+                    is_solid = false;
+                    for i in 0..vertices.len() - 1 {
+                        lines.push([i, i + 1]);
+                    }
+                    // Chiudi il poligono
+                    if vertices.len() > 2 {
+                        lines.push([vertices.len() - 1, 0]);
+                    }
+                } else {
+                    // Per poligoni 2D, tutte le normali puntano verso l'alto (0, 0, 1)
+                    for _face in &faces {
+                        normals.push([0.0, 0.0, 1.0]);
+                    }
+                    // Non generare linee per poligoni solidi - useranno RenderMode::Solid
                 }
             } else {
                 for i in 0..vertices.len() - 1 {
@@ -262,29 +344,44 @@ pub fn converti_a_mesh(
                 faces,
                 normals,
                 color,
-                is_solid,
+                is_solid, // Potrebbe essere stato cambiato a false se la triangolazione fallisce
                 priority,
             });
         }
     }
 
 
-    // Converti ElementData in MeshData
-    let mesh_data_vec: Vec<MeshData> = element_data_vec.into_iter().map(|e| {
+    // Converti ElementData in MeshData e ordina per priorità
+    // Priorità più bassa = renderizzata prima (sotto), priorità più alta = renderizzata dopo (sopra)
+    let mut mesh_data_vec: Vec<(MeshData, u8, i64)> = element_data_vec.into_iter().map(|e| {
         let has_faces = !e.faces.is_empty();
-        MeshData {
+        let mesh_data = MeshData {
             vertices: e.vertices,
-            lines: if e.is_solid { Vec::new() } else { e.lines },
+            // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
+            // Per altri, mostra le linee normali
+            lines: if e.is_solid && has_faces {
+                Vec::new() // Poligoni solidi usano il riempimento, non le linee
+            } else {
+                e.lines
+            },
             faces: e.faces,
             normals: e.normals,
             color: e.color,
+            // Usa Solid per poligoni solidi con triangoli, Lines per il resto
             render_mode: if e.is_solid && has_faces {
                 RenderMode::Solid
             } else {
                 RenderMode::Lines
             },
-        }
+        };
+        (mesh_data, e.priority, e.id)
     }).collect();
+
+    // Ordina per priorità (più bassa prima), poi per ID per garantire consistenza
+    mesh_data_vec.sort_by_key(|(_, priority, id)| (*priority, *id));
+
+    // Estrai solo i MeshData (ora ordinati)
+    let mesh_data_vec: Vec<MeshData> = mesh_data_vec.into_iter().map(|(mesh_data, _, _)| mesh_data).collect();
 
     // Crea il container con i dati delle mesh
     MeshContainer::new(mesh_data_vec)

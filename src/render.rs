@@ -1,6 +1,5 @@
 use embedded_gfx::{
     draw::draw,
-    mesh::{Geometry, K3dMesh, RenderMode},
     K3dengine,
 };
 use embedded_graphics_core::{
@@ -10,7 +9,8 @@ use embedded_graphics_core::{
 use image::RgbImage;
 use nalgebra::Point3;
 
-use crate::map_elements::{MapElement, ElementType};
+use crate::map_elements::MapElement;
+use crate::rendering_adapter::{converti_a_mesh, ConversionParams};
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -76,19 +76,6 @@ impl embedded_graphics_core::geometry::OriginDimensions for ImageFramebuffer {
     }
 }
 
-/// Triangola un poligono usando fan triangulation (funziona per poligoni convessi)
-fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
-    if vertices.len() < 3 {
-        return Vec::new();
-    }
-    
-    let mut faces = Vec::new();
-    // Fan triangulation: ogni triangolo usa il primo vertice e due vertici consecutivi
-    for i in 1..vertices.len() - 1 {
-        faces.push([0, i, i + 1]);
-    }
-    faces
-}
 
 
 /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
@@ -138,27 +125,24 @@ pub fn renderizza_mappa(
     let width = 4000u32;
     let height = 4000u32;
 
-    // Funzione per convertire coordinate geografiche a coordinate 3D world space
-    // Le coordinate devono essere centrate intorno a 0 e scalate per essere visibili
-    // Dopo la trasformazione view+projection, z deve essere tra near e far
-    let center_x = width as f32 / 2.0;
-    let center_y = height as f32 / 2.0;
     // Scala per mantenere le coordinate in un range che la proiezione può gestire
-    // La proiezione perspective converte da world space a clip space
-    // Usiamo una scala che mantiene le coordinate nel frustum visibile
-    // Usa una scala più grande per ingrandire la mappa
-    // Invece di normalizzare a [-1, 1], usiamo un range più grande
-    // per riempire meglio lo schermo
     let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
     
-    let to_3d = |lat: f64, lon: f64| -> [f32; 3] {
-        let x = ((lon - min_lon) / (max_lon - min_lon) * width as f64) as f32;
-        let y = ((lat - min_lat) / (max_lat - min_lat) * height as f64) as f32;
-        // Centra le coordinate: da [0, width/height] a [-width/2, width/2]
-        // Poi scala per essere nel range visibile dalla camera
-        let x_world = (x - center_x) * scale_factor;
-        let y_world = (y - center_y) * scale_factor;
-        [x_world, y_world, 0.0] // z=0 per rendering 2D
+    // Crea i parametri di conversione
+    // Usiamo z diversi per priorità: priorità più alta = z più alto (più vicino alla camera)
+    // Questo assicura che gli edifici (priorità 2) siano sopra le aree (priorità 0-1)
+    // e le strade (priorità 3) siano sopra gli edifici
+    // z_spacing più grande per garantire che gli edifici siano sempre visibili
+    let params = ConversionParams {
+        min_lat,
+        max_lat,
+        min_lon,
+        max_lon,
+        width,
+        height,
+        scale_factor,
+        z_base: 0.0,       // Base z per elementi con priorità 0
+        z_spacing: 0.01,   // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
     };
 
     // Crea il framebuffer con sfondo beige chiaro per un aspetto più naturale
@@ -190,153 +174,9 @@ pub fn renderizza_mappa(
     // FOV più stretto per zoomare di più (30 gradi invece di 90)
     engine.camera.set_fovy(std::f32::consts::PI / 6.0);
 
-    // Raccogliamo tutti i dati prima di creare le mesh per evitare problemi di lifetime
-    struct ElementData {
-        id: i64,  // ID per ordinamento deterministico
-        vertices: Vec<[f32; 3]>,
-        lines: Vec<[usize; 2]>,
-        faces: Vec<[usize; 3]>,  // Triangoli per rendering solido
-        normals: Vec<[f32; 3]>,  // Normal per ogni faccia
-        color: Rgb565,
-        is_solid: bool,  // Se true, usa rendering solido invece di linee
-        priority: u8,    // Priorità di rendering
-    }
-    
-
-    let mut element_data_vec: Vec<ElementData> = Vec::new();
-
-    // Calcola il raggio in coordinate world space per avere cerchi di dimensione pixel corretta
-    let pixel_to_world = scale_factor; // Stessa scala usata per le coordinate
-
-    // Prepara i dati per tutti gli elementi
-    for elemento in elementi {
-        let color = elemento.colore();
-        let priority = elemento.priorita_rendering();
-        let coordinate = elemento.coordinate();
-
-        // Gestisci punti (alberi, punti interesse)
-        if elemento.is_punto() {
-            // Verifica se questo nodo (identificato dal suo ID) fa parte di una way
-            // L'ID del MapElement per un punto corrisponde all'ID del nodo OSM originale
-            if nodi_in_ways.contains(&elemento.id()) {
-                // Questo punto è già parte di una linea o poligono, saltalo
-                continue;
-            }
-            
-            if let Some((lat, lon)) = coordinate.first() {
-                let [x, y, _] = to_3d(*lat, *lon);
-                // Raggio in pixel: varia in base al tipo
-                let (radius_pixels, n_points) = match elemento.element_type {
-                    ElementType::Albero => (8.0, 12),  // Alberi più grandi e visibili
-                    ElementType::PuntoInteresse { .. } => (3.0, 12),  // Punti di interesse ben visibili
-                    _ => (2.0, 10),  // Altri punti più piccoli
-                };
-                let radius = radius_pixels * pixel_to_world;
-
-                let mut vertices = Vec::new();
-                for i in 0..n_points {
-                    let angle = (i as f32 / n_points as f32) * 2.0 * std::f32::consts::PI;
-                    vertices.push([x + angle.cos() * radius, y + angle.sin() * radius, 0.0]);
-                }
-
-                let mut lines = Vec::new();
-                for i in 0..n_points {
-                    lines.push([i, (i + 1) % n_points]);
-                }
-
-                element_data_vec.push(ElementData {
-                    id: elemento.id(),
-                    vertices,
-                    lines,
-                    faces: Vec::new(),
-                    normals: Vec::new(),
-                    color,
-                    is_solid: false,
-                    priority,
-                });
-            }
-        } else {
-            // Gestisci linee e poligoni
-            if coordinate.len() < 2 {
-                continue;
-            }
-
-            let mut vertices = Vec::new();
-            for (lat, lon) in &coordinate {
-                vertices.push(to_3d(*lat, *lon));
-            }
-
-            // Per poligoni chiusi, genera triangoli per rendering solido
-            let is_solid = elemento.is_chiuso() && vertices.len() >= 3;
-            
-            let mut lines = Vec::new();
-            let mut faces = Vec::new();
-            let mut normals = Vec::new();
-            
-            if is_solid {
-                // Triangola il poligono
-                faces = triangola_poligono(&vertices);
-                // Per poligoni 2D (z=0), tutte le normali puntano verso l'alto (0, 0, 1)
-                for _face in &faces {
-                    normals.push([0.0, 0.0, 1.0]);
-                }
-            } else {
-                // Per linee aperte, usa solo linee
-                for i in 0..vertices.len() - 1 {
-                    lines.push([i, i + 1]);
-                }
-            }
-
-            element_data_vec.push(ElementData {
-                id: elemento.id(),
-                vertices,
-                lines,
-                faces,
-                normals,
-                color,
-                is_solid,
-                priority,
-            });
-        }
-    }
-
-    // Ora crea le mesh con riferimenti ai dati che vivono abbastanza a lungo
-    // Creiamo le mesh e le ordiniamo per priorità e ID per garantire consistenza
-    let mut meshes_with_priority: Vec<(K3dMesh, u8, i64)> = Vec::new();
-
-    for element_data in &element_data_vec {
-        if element_data.is_solid && !element_data.faces.is_empty() {
-            // Rendering solido per poligoni
-            let mut mesh = K3dMesh::new(Geometry {
-                vertices: &element_data.vertices,
-                faces: &element_data.faces,
-                colors: &[],
-                lines: &[],  // Non mostriamo le linee per i poligoni solidi
-                normals: &element_data.normals,
-            });
-            mesh.set_color(element_data.color);
-            mesh.set_render_mode(RenderMode::Solid);
-            meshes_with_priority.push((mesh, element_data.priority, element_data.id));
-        } else {
-            // Rendering a linee per strade, fiumi, punti, etc.
-            let mut mesh = K3dMesh::new(Geometry {
-                vertices: &element_data.vertices,
-                faces: &[],
-                colors: &[],
-                lines: &element_data.lines,
-                normals: &[],
-            });
-            mesh.set_color(element_data.color);
-            mesh.set_render_mode(RenderMode::Lines);
-            meshes_with_priority.push((mesh, element_data.priority, element_data.id));
-        }
-    }
-    
-    // Ordina per priorità (più bassa prima), poi per ID per garantire consistenza
-    meshes_with_priority.sort_by_key(|(_, priority, id)| (*priority, *id));
-    
-    // Estrai solo le mesh (ora ordinate)
-    let meshes: Vec<K3dMesh> = meshes_with_priority.into_iter().map(|(mesh, _, _)| mesh).collect();
+    // Usa rendering_adapter per creare le mesh
+    let mesh_container = converti_a_mesh(elementi, nodi_in_ways, params);
+    let meshes = mesh_container.get_meshes();
 
     // Renderizza tutte le mesh
     // L'API si aspetta IntoIterator<Item = &K3dMesh>, quindi passiamo &meshes
