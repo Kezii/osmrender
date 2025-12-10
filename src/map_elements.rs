@@ -9,8 +9,11 @@ pub struct MapElement {
     /// Coordinate dell'elemento: (lat, lon)
     /// - Per punti: un solo elemento
     /// - Per linee: sequenza di punti
-    /// - Per poligoni: sequenza di punti chiusa
+    /// - Per poligoni: sequenza di punti chiusa (anello esterno)
     pub vertices: Vec<(f64, f64)>,
+    /// Anelli interni (buchi) per multipolygon
+    /// Ogni anello interno è un vettore di coordinate (lat, lon)
+    pub inner_rings: Vec<Vec<(f64, f64)>>,
     /// Tipo specifico dell'elemento
     pub element_type: ElementType,
 }
@@ -135,7 +138,7 @@ impl MapElement {
             ElementType::Edificio => Rgb565::new(180 >> 3, 140 >> 2, 100 >> 3),
             ElementType::Parco => Rgb565::new(0, 31, 0),
             ElementType::Acqua => Rgb565::new(100 >> 3, 150 >> 2, 220 >> 3),
-            ElementType::Foresta => Rgb565::new(0, 20, 0),
+            ElementType::Foresta => Rgb565::new(0, 12, 0), // Verde più scuro per landuse:forest
             ElementType::Boscaglia => Rgb565::new(0, 25, 0),
             ElementType::Residenziale => Rgb565::new(200 >> 3, 200 >> 2, 200 >> 3),
             ElementType::Commerciale => Rgb565::new(255 >> 3, 200 >> 2, 200 >> 3),
@@ -165,17 +168,27 @@ impl MapElement {
     /// Determina la priorità di rendering (più bassa = renderizzata prima, sotto)
     pub fn priorita_rendering(&self) -> u8 {
         match self.element_type {
-            ElementType::Residenziale | ElementType::Commerciale | 
-            ElementType::Industriale | ElementType::Agricolo | 
-            ElementType::Aeroporto | ElementType::Cimitero => 0,
-            ElementType::Acqua | ElementType::Foresta | ElementType::Boscaglia | ElementType::Parco | ElementType::CampoSportivo => 1,
-            ElementType::Edificio => 2,
-            ElementType::StradaPrincipale | ElementType::StradaSecondaria | 
-            ElementType::StradaLocale | ElementType::StradaPedonale | 
-            ElementType::Ferrovia | ElementType::Fiume | ElementType::Canale => 3,
-            ElementType::Albero | ElementType::PuntoInteresse { .. } => 4,
+            ElementType::Residenziale
+            | ElementType::Commerciale
+            | ElementType::Industriale
+            | ElementType::Agricolo
+            | ElementType::Aeroporto
+            | ElementType::Cimitero => 0,
+            ElementType::Foresta
+            | ElementType::Boscaglia
+            | ElementType::Parco
+            | ElementType::CampoSportivo => 1,
+            ElementType::Acqua => 2, // Acqua sopra foreste e parchi
+            ElementType::Edificio => 3,
+            ElementType::StradaPrincipale
+            | ElementType::StradaSecondaria
+            | ElementType::StradaLocale
+            | ElementType::StradaPedonale
+            | ElementType::Ferrovia
+            | ElementType::Fiume
+            | ElementType::Canale => 4,
+            ElementType::Albero | ElementType::PuntoInteresse { .. } => 5,
             ElementType::Altro { .. } => 1,
         }
     }
 }
-

@@ -1,7 +1,7 @@
+use crate::map_elements::{ElementType, MapElement};
+use earcut::Earcut;
 use embedded_gfx::mesh::{Geometry, K3dMesh, RenderMode};
 use embedded_graphics_core::pixelcolor::Rgb565;
-use crate::map_elements::{MapElement, ElementType};
-use earcut::Earcut;
 
 /// Struttura che mantiene tutti i dati delle mesh per garantire che i riferimenti siano validi
 /// Necessaria perché K3dMesh usa riferimenti ai dati
@@ -90,69 +90,153 @@ impl ConversionParams {
     fn to_3d(&self, lat: f64, lon: f64, priority: u8) -> [f32; 3] {
         let center_x = self.width as f32 / 2.0;
         let center_y = self.height as f32 / 2.0;
-        
+
         let x = ((lon - self.min_lon) / (self.max_lon - self.min_lon) * self.width as f64) as f32;
         let y = ((lat - self.min_lat) / (self.max_lat - self.min_lat) * self.height as f64) as f32;
-        
+
         let x_world = (x - center_x) * self.scale_factor;
         let y_world = (y - center_y) * self.scale_factor;
-        
+
         // Z basato sulla priorità: priorità più alta = Z più alto (più vicino alla camera)
         let z = self.z_base + (priority as f32 * self.z_spacing);
-        
+
         [x_world, y_world, z]
     }
 }
 
-/// Triangola un poligono usando earcut (algoritmo Ear Clipping)
-/// Gestisce correttamente poligoni convessi e concavi
-fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
-    if vertices.len() < 3 {
-        eprintln!("⚠️  triangola_poligono: troppo pochi vertici ({})", vertices.len());
-        return Vec::new();
+/// Triangola un poligono con buchi usando earcut (algoritmo Ear Clipping)
+/// Gestisce correttamente poligoni convessi e concavi con buchi
+/// outer_ring: anello esterno del poligono
+/// inner_rings: anelli interni (buchi)
+/// Restituisce (faces, all_vertices) dove all_vertices contiene tutti i vertici nell'ordine corretto
+fn triangola_poligono_con_buchi(
+    outer_ring: &[[f32; 3]],
+    inner_rings: &[Vec<[f32; 3]>],
+) -> (Vec<[usize; 3]>, Vec<[f32; 3]>) {
+    if outer_ring.len() < 3 {
+        eprintln!(
+            "⚠️  triangola_poligono_con_buchi: troppo pochi vertici nell'anello esterno ({})",
+            outer_ring.len()
+        );
+        return (Vec::new(), Vec::new());
     }
-    
+
     // Rimuovi vertici duplicati (primo = ultimo) se presenti
-    let mut vertices_clean = vertices.to_vec();
+    let mut outer_clean = outer_ring.to_vec();
     const EPSILON: f32 = 1e-6;
-    if vertices_clean.len() > 3 {
-        let first = &vertices_clean[0];
-        let last = &vertices_clean[vertices_clean.len() - 1];
+    if outer_clean.len() > 3 {
+        let first = &outer_clean[0];
+        let last = &outer_clean[outer_clean.len() - 1];
         if (first[0] - last[0]).abs() < EPSILON && (first[1] - last[1]).abs() < EPSILON {
-            vertices_clean.pop();
+            outer_clean.pop();
         }
     }
-    
-    if vertices_clean.len() < 3 {
-        eprintln!("⚠️  triangola_poligono: dopo pulizia, troppo pochi vertici ({})", vertices_clean.len());
-        return Vec::new();
+
+    if outer_clean.len() < 3 {
+        eprintln!(
+            "⚠️  triangola_poligono_con_buchi: dopo pulizia, troppo pochi vertici ({})",
+            outer_clean.len()
+        );
+        return (Vec::new(), Vec::new());
     }
-    
+
     // Estrai solo le coordinate X e Y (ignorando Z che è costante per ogni poligono)
     // earcut richiede un iteratore di [f64; 2]
-    let vertices_2d: Vec<[f64; 2]> = vertices_clean
+    let mut all_vertices_2d: Vec<[f64; 2]> = outer_clean
         .iter()
         .map(|v| [v[0] as f64, v[1] as f64])
         .collect();
-    
-    // Nessun buco nel poligono (hole_indices vuoto)
-    let hole_indices: &[u32] = &[];
-    
-    // Triangola usando earcut
+
+    // Pulisci e aggiungi gli anelli interni
+    // Gli anelli interni devono essere in senso opposto rispetto all'anello esterno
+    let mut inner_rings_clean_2d: Vec<Vec<[f64; 2]>> = Vec::new();
+    let mut inner_rings_clean_3d: Vec<Vec<[f32; 3]>> = Vec::new();
+
+    // Calcola l'orientamento dell'anello esterno
+    let mut outer_signed_area = 0.0;
+    for i in 0..all_vertices_2d.len() {
+        let j = (i + 1) % all_vertices_2d.len();
+        outer_signed_area += all_vertices_2d[i][0] * all_vertices_2d[j][1];
+        outer_signed_area -= all_vertices_2d[j][0] * all_vertices_2d[i][1];
+    }
+    let outer_is_ccw = outer_signed_area > 0.0;
+
+    for inner_ring in inner_rings {
+        let mut inner_clean_2d = inner_ring
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64])
+            .collect::<Vec<_>>();
+        let mut inner_clean_3d = inner_ring.to_vec();
+
+        // Rimuovi vertici duplicati
+        if inner_clean_2d.len() > 3 {
+            let first = &inner_clean_2d[0];
+            let last = &inner_clean_2d[inner_clean_2d.len() - 1];
+            if (first[0] - last[0]).abs() < EPSILON as f64
+                && (first[1] - last[1]).abs() < EPSILON as f64
+            {
+                inner_clean_2d.pop();
+                inner_clean_3d.pop();
+            }
+        }
+
+        if inner_clean_2d.len() >= 3 {
+            // Verifica l'orientamento dell'anello interno
+            let mut inner_signed_area = 0.0;
+            for i in 0..inner_clean_2d.len() {
+                let j = (i + 1) % inner_clean_2d.len();
+                inner_signed_area += inner_clean_2d[i][0] * inner_clean_2d[j][1];
+                inner_signed_area -= inner_clean_2d[j][0] * inner_clean_2d[i][1];
+            }
+            let inner_is_ccw = inner_signed_area > 0.0;
+
+            // Gli anelli interni devono avere orientamento opposto all'anello esterno
+            // Se l'anello esterno è CCW, gli interni devono essere CW (e viceversa)
+            if inner_is_ccw == outer_is_ccw {
+                inner_clean_2d.reverse();
+                inner_clean_3d.reverse();
+            }
+
+            inner_rings_clean_2d.push(inner_clean_2d);
+            inner_rings_clean_3d.push(inner_clean_3d);
+        }
+    }
+
+    // Calcola gli indici dei buchi (dove iniziano gli anelli interni)
+    let mut hole_indices: Vec<u32> = Vec::new();
+    let mut current_index = all_vertices_2d.len() as u32;
+
+    for inner_ring in &inner_rings_clean_2d {
+        hole_indices.push(current_index);
+        all_vertices_2d.extend(inner_ring.iter().copied());
+        current_index += inner_ring.len() as u32;
+    }
+
+    // Triangola usando earcut con buchi
     let mut triangles = Vec::new();
     let mut earcut = Earcut::new();
-    earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
-    
+    earcut.earcut(
+        all_vertices_2d.iter().copied(),
+        &hole_indices,
+        &mut triangles,
+    );
+
     if triangles.is_empty() {
-        eprintln!("⚠️  triangola_poligono: earcut ha restituito 0 triangoli per {} vertici", vertices_2d.len());
-        eprintln!("   Primi 3 vertici 2D: {:?}", vertices_2d.iter().take(3).collect::<Vec<_>>());
-        return Vec::new();
+        eprintln!(
+            "⚠️  triangola_poligono_con_buchi: earcut ha restituito 0 triangoli per {} vertici esterni e {} buchi",
+            outer_clean.len(),
+            inner_rings_clean_2d.len()
+        );
+        return (Vec::new(), Vec::new());
     }
-    
+
     if triangles.len() % 3 != 0 {
-        eprintln!("⚠️  triangola_poligono: numero di indici non multiplo di 3: {}", triangles.len());
+        eprintln!(
+            "⚠️  triangola_poligono_con_buchi: numero di indici non multiplo di 3: {}",
+            triangles.len()
+        );
     }
-    
+
     // Converti gli indici u32 in [usize; 3]
     let mut faces = Vec::with_capacity(triangles.len() / 3);
     for i in (0..triangles.len()).step_by(3) {
@@ -164,11 +248,107 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
             ]);
         }
     }
-    
+
     if faces.is_empty() {
-        eprintln!("⚠️  triangola_poligono: nessuna faccia generata da {} triangoli", triangles.len());
+        eprintln!(
+            "⚠️  triangola_poligono_con_buchi: nessuna faccia generata da {} triangoli",
+            triangles.len()
+        );
     }
-    
+
+    // Costruisci il vettore completo di vertici 3D nello stesso ordine usato per la triangolazione
+    // (esterno + buchi, con orientamento corretto)
+    let mut all_vertices_3d = outer_clean.clone();
+    for inner_ring in &inner_rings_clean_3d {
+        all_vertices_3d.extend(inner_ring.iter().copied());
+    }
+
+    (faces, all_vertices_3d)
+}
+
+/// Triangola un poligono semplice (senza buchi) usando earcut (algoritmo Ear Clipping)
+/// Gestisce correttamente poligoni convessi e concavi
+fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
+    if vertices.len() < 3 {
+        eprintln!(
+            "⚠️  triangola_poligono: troppo pochi vertici ({})",
+            vertices.len()
+        );
+        return Vec::new();
+    }
+
+    // Rimuovi vertici duplicati (primo = ultimo) se presenti
+    let mut vertices_clean = vertices.to_vec();
+    const EPSILON: f32 = 1e-6;
+    if vertices_clean.len() > 3 {
+        let first = &vertices_clean[0];
+        let last = &vertices_clean[vertices_clean.len() - 1];
+        if (first[0] - last[0]).abs() < EPSILON && (first[1] - last[1]).abs() < EPSILON {
+            vertices_clean.pop();
+        }
+    }
+
+    if vertices_clean.len() < 3 {
+        eprintln!(
+            "⚠️  triangola_poligono: dopo pulizia, troppo pochi vertici ({})",
+            vertices_clean.len()
+        );
+        return Vec::new();
+    }
+
+    // Estrai solo le coordinate X e Y (ignorando Z che è costante per ogni poligono)
+    // earcut richiede un iteratore di [f64; 2]
+    let vertices_2d: Vec<[f64; 2]> = vertices_clean
+        .iter()
+        .map(|v| [v[0] as f64, v[1] as f64])
+        .collect();
+
+    // Nessun buco nel poligono (hole_indices vuoto)
+    let hole_indices: &[u32] = &[];
+
+    // Triangola usando earcut
+    let mut triangles = Vec::new();
+    let mut earcut = Earcut::new();
+    earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
+
+    if triangles.is_empty() {
+        eprintln!(
+            "⚠️  triangola_poligono: earcut ha restituito 0 triangoli per {} vertici",
+            vertices_2d.len()
+        );
+        eprintln!(
+            "   Primi 3 vertici 2D: {:?}",
+            vertices_2d.iter().take(3).collect::<Vec<_>>()
+        );
+        return Vec::new();
+    }
+
+    if triangles.len() % 3 != 0 {
+        eprintln!(
+            "⚠️  triangola_poligono: numero di indici non multiplo di 3: {}",
+            triangles.len()
+        );
+    }
+
+    // Converti gli indici u32 in [usize; 3]
+    let mut faces = Vec::with_capacity(triangles.len() / 3);
+    for i in (0..triangles.len()).step_by(3) {
+        if i + 2 < triangles.len() {
+            faces.push([
+                triangles[i] as usize,
+                triangles[i + 1] as usize,
+                triangles[i + 2] as usize,
+            ]);
+        }
+    }
+
+    if faces.is_empty() {
+        eprintln!(
+            "⚠️  triangola_poligono: nessuna faccia generata da {} triangoli",
+            triangles.len()
+        );
+    }
+
     faces
 }
 
@@ -186,24 +366,22 @@ impl MeshContainer {
     /// Restituisce un array di mesh pronte per il rendering
     /// I riferimenti sono validi finché il container esiste
     pub fn get_meshes(&self) -> Vec<K3dMesh<'_>> {
-        self.mesh_data.iter().map(|mesh_data_item| {
-            let mut mesh = K3dMesh::new(Geometry {
-                vertices: &mesh_data_item.vertices,
-                faces: &mesh_data_item.faces,
-                colors: &[],
-                lines: &mesh_data_item.lines,
-                normals: &mesh_data_item.normals,
-            });
-            mesh.set_color(mesh_data_item.color);
-            // Copia manualmente RenderMode (non implementa Clone)
-            match mesh_data_item.render_mode {
-                RenderMode::Points => mesh.set_render_mode(RenderMode::Points),
-                RenderMode::Lines => mesh.set_render_mode(RenderMode::Lines),
-                RenderMode::Solid => mesh.set_render_mode(RenderMode::Solid),
-                RenderMode::SolidLightDir(dir) => mesh.set_render_mode(RenderMode::SolidLightDir(dir)),
-            }
-            mesh
-        }).collect()
+        self.mesh_data
+            .iter()
+            .map(|mesh_data_item| {
+                let mut mesh = K3dMesh::new(Geometry {
+                    vertices: &mesh_data_item.vertices,
+                    faces: &mesh_data_item.faces,
+                    colors: &[],
+                    lines: &mesh_data_item.lines,
+                    normals: &mesh_data_item.normals,
+                });
+                mesh.set_color(mesh_data_item.color);
+                // Copia manualmente RenderMode (non implementa Clone)
+                mesh.set_render_mode(mesh_data_item.render_mode.clone());
+                mesh
+            })
+            .collect()
     }
 }
 
@@ -248,7 +426,7 @@ pub fn converti_a_mesh(
                 // Questo punto è già parte di una linea o poligono, saltalo
                 continue;
             }
-            
+
             if let Some((lat, lon)) = coordinate.first() {
                 let [x, y, z] = params.to_3d(*lat, *lon, priority);
                 let (radius_pixels, n_points) = match elemento.element_type {
@@ -293,29 +471,69 @@ pub fn converti_a_mesh(
                 let vertex = params.to_3d(*lat, *lon, priority);
                 vertices.push(vertex);
             }
-            
+
             // Debug: verifica z per edifici
             if matches!(elemento.element_type, ElementType::Edificio) && !vertices.is_empty() {
                 let z = vertices[0][2];
                 if z < 0.01 {
-                    eprintln!("⚠️  Edificio ID {} ha z={} (priorità={}), potrebbe essere nascosto", 
-                        elemento.id(), z, priority);
+                    eprintln!(
+                        "⚠️  Edificio ID {} ha z={} (priorità={}), potrebbe essere nascosto",
+                        elemento.id(),
+                        z,
+                        priority
+                    );
                 }
             }
 
             let mut is_solid = elemento.is_chiuso() && vertices.len() >= 3;
-            
+
             let mut lines = Vec::new();
             let mut faces = Vec::new();
             let mut normals = Vec::new();
-            
+
             if is_solid {
-                faces = triangola_poligono(&vertices);
+                // Converti gli inner_rings (buchi) da coordinate geografiche a 3D
+                let inner_rings_3d: Vec<Vec<[f32; 3]>> = elemento
+                    .inner_rings
+                    .iter()
+                    .map(|inner_ring| {
+                        inner_ring
+                            .iter()
+                            .map(|(lat, lon)| params.to_3d(*lat, *lon, priority))
+                            .collect()
+                    })
+                    .collect();
+
+                // Usa triangola_poligono_con_buchi se ci sono buchi, altrimenti triangola_poligono
+                if !inner_rings_3d.is_empty() {
+                    // Triangola usando l'anello esterno e i buchi
+                    // La funzione restituisce (faces, all_vertices) con i vertici nell'ordine corretto
+                    let (faces_result, all_vertices) =
+                        triangola_poligono_con_buchi(&vertices, &inner_rings_3d);
+                    faces = faces_result;
+
+                    // Se la triangolazione ha successo, usa i vertici combinati
+                    // perché gli indici delle faces si riferiscono a questo ordine
+                    if !faces.is_empty() {
+                        vertices = all_vertices;
+                    }
+                } else {
+                    faces = triangola_poligono(&vertices);
+                }
+
                 // Se la triangolazione fallisce, usa le linee del perimetro come fallback
                 if faces.is_empty() {
-                    eprintln!("⚠️  Triangolazione fallita per elemento ID {} (tipo: {:?}), {} vertici", 
-                        elemento.id(), elemento.element_type, vertices.len());
-                    eprintln!("   Vertici: {:?}", vertices.iter().take(5).collect::<Vec<_>>());
+                    eprintln!(
+                        "⚠️  Triangolazione fallita per elemento ID {} (tipo: {:?}), {} vertici, {} buchi",
+                        elemento.id(),
+                        elemento.element_type,
+                        vertices.len(),
+                        inner_rings_3d.len()
+                    );
+                    eprintln!(
+                        "   Vertici: {:?}",
+                        vertices.iter().take(5).collect::<Vec<_>>()
+                    );
                     is_solid = false;
                     for i in 0..vertices.len() - 1 {
                         lines.push([i, i + 1]);
@@ -350,38 +568,43 @@ pub fn converti_a_mesh(
         }
     }
 
-
     // Converti ElementData in MeshData e ordina per priorità
     // Priorità più bassa = renderizzata prima (sotto), priorità più alta = renderizzata dopo (sopra)
-    let mut mesh_data_vec: Vec<(MeshData, u8, i64)> = element_data_vec.into_iter().map(|e| {
-        let has_faces = !e.faces.is_empty();
-        let mesh_data = MeshData {
-            vertices: e.vertices,
-            // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
-            // Per altri, mostra le linee normali
-            lines: if e.is_solid && has_faces {
-                Vec::new() // Poligoni solidi usano il riempimento, non le linee
-            } else {
-                e.lines
-            },
-            faces: e.faces,
-            normals: e.normals,
-            color: e.color,
-            // Usa Solid per poligoni solidi con triangoli, Lines per il resto
-            render_mode: if e.is_solid && has_faces {
-                RenderMode::Solid
-            } else {
-                RenderMode::Lines
-            },
-        };
-        (mesh_data, e.priority, e.id)
-    }).collect();
+    let mut mesh_data_vec: Vec<(MeshData, u8, i64)> = element_data_vec
+        .into_iter()
+        .map(|e| {
+            let has_faces = !e.faces.is_empty();
+            let mesh_data = MeshData {
+                vertices: e.vertices,
+                // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
+                // Per altri, mostra le linee normali
+                lines: if e.is_solid && has_faces {
+                    Vec::new() // Poligoni solidi usano il riempimento, non le linee
+                } else {
+                    e.lines
+                },
+                faces: e.faces,
+                normals: e.normals,
+                color: e.color,
+                // Usa Solid per poligoni solidi con triangoli, Lines per il resto
+                render_mode: if e.is_solid && has_faces {
+                    RenderMode::Solid
+                } else {
+                    RenderMode::Lines
+                },
+            };
+            (mesh_data, e.priority, e.id)
+        })
+        .collect();
 
     // Ordina per priorità (più bassa prima), poi per ID per garantire consistenza
     mesh_data_vec.sort_by_key(|(_, priority, id)| (*priority, *id));
 
     // Estrai solo i MeshData (ora ordinati)
-    let mesh_data_vec: Vec<MeshData> = mesh_data_vec.into_iter().map(|(mesh_data, _, _)| mesh_data).collect();
+    let mesh_data_vec: Vec<MeshData> = mesh_data_vec
+        .into_iter()
+        .map(|(mesh_data, _, _)| mesh_data)
+        .collect();
 
     // Crea il container con i dati delle mesh
     MeshContainer::new(mesh_data_vec)

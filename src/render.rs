@@ -1,7 +1,4 @@
-use embedded_gfx::{
-    draw::draw,
-    K3dengine,
-};
+use embedded_gfx::{K3dengine, draw::draw};
 use embedded_graphics_core::{
     draw_target::DrawTarget,
     pixelcolor::{Rgb565, RgbColor as _},
@@ -10,21 +7,20 @@ use image::RgbImage;
 use nalgebra::Point3;
 
 use crate::map_elements::MapElement;
-use crate::rendering_adapter::{converti_a_mesh, ConversionParams};
+use crate::rendering_adapter::{ConversionParams, converti_a_mesh};
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     const R: f64 = 6371000.0; // Raggio della Terra in metri
-    
+
     let d_lat = (lat2 - lat1).to_radians();
     let d_lon = (lon2 - lon1).to_radians();
-    
-    let a = (d_lat / 2.0).sin().powi(2) +
-            lat1.to_radians().cos() * lat2.to_radians().cos() *
-            (d_lon / 2.0).sin().powi(2);
-    
+
+    let a = (d_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
+
     let c = 2.0 * a.sqrt().asin();
-    
+
     R * c
 }
 
@@ -51,7 +47,7 @@ impl DrawTarget for ImageFramebuffer {
         for pixel in pixels {
             let x = pixel.0.x as u32;
             let y = pixel.0.y as u32;
-            
+
             if x < self.width && y < self.height {
                 let idx = ((y * self.width + x) * 3) as usize;
                 if idx + 2 < self.buffer.len() {
@@ -75,8 +71,6 @@ impl embedded_graphics_core::geometry::OriginDimensions for ImageFramebuffer {
         embedded_graphics_core::geometry::Size::new(self.width, self.height)
     }
 }
-
-
 
 /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
 pub fn renderizza_mappa(
@@ -107,27 +101,13 @@ pub fn renderizza_mappa(
     let mut min_lon = centro_lon - gradi_lon;
     let mut max_lon = centro_lon + gradi_lon;
 
-    // Aggiorna bounds con gli elementi effettivi, ma solo per i punti nel perimetro
-    for elemento in elementi {
-        let coordinate = elemento.coordinate();
-        for (lat, lon) in coordinate {
-            // Filtra solo i punti nel perimetro per il calcolo dei bounds
-            if entro_raggio(lat, lon, centro_lat, centro_lon, raggio_metri) {
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-            }
-        }
-    }
-
     // Dimensioni dell'immagine
     let width = 4000u32;
     let height = 4000u32;
 
     // Scala per mantenere le coordinate in un range che la proiezione può gestire
     let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
-    
+
     // Crea i parametri di conversione
     // Usiamo z diversi per priorità: priorità più alta = z più alto (più vicino alla camera)
     // Questo assicura che gli edifici (priorità 2) siano sopra le aree (priorità 0-1)
@@ -141,14 +121,14 @@ pub fn renderizza_mappa(
         width,
         height,
         scale_factor,
-        z_base: 0.0,       // Base z per elementi con priorità 0
-        z_spacing: 0.01,   // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
+        z_base: 0.0,     // Base z per elementi con priorità 0
+        z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
     };
 
     // Crea il framebuffer con sfondo beige chiaro per un aspetto più naturale
     let mut buffer = vec![0u8; (width * height * 3) as usize];
     for i in (0..buffer.len()).step_by(3) {
-        buffer[i] = 245;     // R
+        buffer[i] = 245; // R
         buffer[i + 1] = 240; // G
         buffer[i + 2] = 230; // B (beige chiaro)
     }
@@ -160,13 +140,13 @@ pub fn renderizza_mappa(
 
     // Crea l'engine 3D
     let mut engine = K3dengine::new(width as u16, height as u16);
-    
+
     // Configura la camera per vedere gli oggetti a z=0
     // Dopo la trasformazione view, z diventa la distanza dalla camera
     // Se camera è a z=-5 e oggetti a z=0, dopo view gli oggetti sono a z=5
     engine.camera.near = 0.1;
     engine.camera.far = 100.0;
-    
+
     // Posiziona la camera più vicina per zoomare sulla mappa
     // Distanza più piccola = zoom maggiore
     engine.camera.set_position(Point3::new(0.0, 0.0, 2.0));
@@ -190,7 +170,7 @@ pub fn renderizza_mappa(
     // Converti il framebuffer in RgbImage e salva
     let img = RgbImage::from_raw(width, height, framebuffer.buffer)
         .ok_or("Failed to create image from framebuffer")?;
-    
+
     img.save(output_path)?;
     println!("Mappa salvata in: {}", output_path);
 
