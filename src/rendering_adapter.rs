@@ -2,6 +2,7 @@ use crate::map_elements::{ElementType, MapElement};
 use earcut::Earcut;
 use embedded_gfx::mesh::{Geometry, K3dMesh, RenderMode};
 use embedded_graphics_core::pixelcolor::Rgb565;
+use log::debug;
 
 /// Struttura che mantiene tutti i dati delle mesh per garantire che i riferimenti siano validi
 /// Necessaria perché K3dMesh usa riferimenti ai dati
@@ -222,7 +223,7 @@ fn triangola_poligono_con_buchi(
     );
 
     if triangles.is_empty() {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono_con_buchi: earcut ha restituito 0 triangoli per {} vertici esterni e {} buchi",
             outer_clean.len(),
             inner_rings_clean_2d.len()
@@ -231,7 +232,7 @@ fn triangola_poligono_con_buchi(
     }
 
     if triangles.len() % 3 != 0 {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono_con_buchi: numero di indici non multiplo di 3: {}",
             triangles.len()
         );
@@ -250,7 +251,7 @@ fn triangola_poligono_con_buchi(
     }
 
     if faces.is_empty() {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono_con_buchi: nessuna faccia generata da {} triangoli",
             triangles.len()
         );
@@ -270,7 +271,7 @@ fn triangola_poligono_con_buchi(
 /// Gestisce correttamente poligoni convessi e concavi
 fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     if vertices.len() < 3 {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono: troppo pochi vertici ({})",
             vertices.len()
         );
@@ -289,7 +290,7 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     }
 
     if vertices_clean.len() < 3 {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono: dopo pulizia, troppo pochi vertici ({})",
             vertices_clean.len()
         );
@@ -312,11 +313,11 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
 
     if triangles.is_empty() {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono: earcut ha restituito 0 triangoli per {} vertici",
             vertices_2d.len()
         );
-        eprintln!(
+        debug!(
             "   Primi 3 vertici 2D: {:?}",
             vertices_2d.iter().take(3).collect::<Vec<_>>()
         );
@@ -324,7 +325,7 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     }
 
     if triangles.len() % 3 != 0 {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono: numero di indici non multiplo di 3: {}",
             triangles.len()
         );
@@ -343,7 +344,7 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     }
 
     if faces.is_empty() {
-        eprintln!(
+        debug!(
             "⚠️  triangola_poligono: nessuna faccia generata da {} triangoli",
             triangles.len()
         );
@@ -523,14 +524,14 @@ pub fn converti_a_mesh(
 
                 // Se la triangolazione fallisce, usa le linee del perimetro come fallback
                 if faces.is_empty() {
-                    eprintln!(
+                    debug!(
                         "⚠️  Triangolazione fallita per elemento ID {} (tipo: {:?}), {} vertici, {} buchi",
                         elemento.id(),
                         elemento.element_type,
                         vertices.len(),
                         inner_rings_3d.len()
                     );
-                    eprintln!(
+                    debug!(
                         "   Vertici: {:?}",
                         vertices.iter().take(5).collect::<Vec<_>>()
                     );

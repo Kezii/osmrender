@@ -1,17 +1,15 @@
 use osmpbf::{Element, ElementReader};
+use osmrender::chunk_manager::{ChunkConfig, GeoBBox, load_primitives_in_bbox};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-mod converter;
-mod map_elements;
-mod render;
-mod rendering_adapter;
-
-use converter::{
+use osmrender::converter::{
     ConversionResult, NodeData, RelationData, RelationMember, RelationMemberType, WayData,
-    converti_elementi_osm,
+    converti_elementi_osm_posizionati,
 };
+use osmrender::spatial_index::{OsmPrimitive, PositionedPrimitive, build_spatial_index};
+use osmrender::{map_elements, render};
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -45,148 +43,34 @@ struct Accumulator {
 
 /// Stampa gli elementi OSM solo se sono entro un raggio specificato
 fn stampa_elementi_in_raggio(
-    percorso_file: &str,
     centro_lat: f64,
     centro_lon: f64,
     raggio_metri: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Fase 1: Lettura e raccolta elementi (in parallelo) ---");
 
-    let reader = ElementReader::from_path(percorso_file)?;
-    let accumulator = reader.par_map_reduce(
-        |element| {
-            match element {
-                Element::DenseNode(node) => {
-                    let tags: Vec<(String, String)> = node
-                        .tags()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect();
-                    Accumulator {
-                        nodes: vec![NodeData {
-                            id: node.id(),
-                            lat: node.lat(),
-                            lon: node.lon(),
-                            tags,
-                        }],
-                        ways: Vec::new(),
-                        relations: Vec::new(),
-                    }
-                }
-                Element::Node(_node) => {
-                    panic!("Node is not supported");
-                }
-                Element::Way(way) => {
-                    let node_refs: Vec<i64> = way.refs().collect();
-                    let tags: Vec<(String, String)> = way
-                        .tags()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect();
-                    Accumulator {
-                        nodes: Vec::new(),
-                        ways: vec![WayData {
-                            id: way.id(),
-                            node_refs,
-                            tags,
-                        }],
-                        relations: Vec::new(),
-                    }
-                }
-                Element::Relation(rel) => {
-                    let tags: Vec<(String, String)> = rel
-                        .tags()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect();
+    let bbox = GeoBBox {
+        min_lat: centro_lat - raggio_metri / 111000.0,
+        max_lat: centro_lat + raggio_metri / 111000.0,
+        min_lon: centro_lon - raggio_metri / (111000.0 * centro_lat.to_radians().cos()),
+        max_lon: centro_lon + raggio_metri / (111000.0 * centro_lat.to_radians().cos()),
+    };
 
-                    // Verifica se è un multipolygon
-                    let is_multipolygon =
-                        tags.iter().any(|(k, v)| k == "type" && v == "multipolygon");
-
-                    if is_multipolygon {
-                        let members: Vec<RelationMember> = rel
-                            .members()
-                            .map(|m| {
-                                let member_type = match m.member_type {
-                                    osmpbf::RelMemberType::Node => RelationMemberType::Node,
-                                    osmpbf::RelMemberType::Way => RelationMemberType::Way,
-                                    osmpbf::RelMemberType::Relation => RelationMemberType::Relation,
-                                };
-                                let role = m.role().unwrap_or("").to_string();
-                                RelationMember {
-                                    member_type,
-                                    member_id: m.member_id,
-                                    role,
-                                }
-                            })
-                            .collect();
-
-                        Accumulator {
-                            nodes: Vec::new(),
-                            ways: Vec::new(),
-                            relations: vec![RelationData {
-                                id: rel.id(),
-                                tags,
-                                members,
-                            }],
-                        }
-                    } else {
-                        Accumulator {
-                            nodes: Vec::new(),
-                            ways: Vec::new(),
-                            relations: Vec::new(),
-                        }
-                    }
-                }
-            }
-        },
-        || Accumulator {
-            nodes: Vec::new(),
-            ways: Vec::new(),
-            relations: Vec::new(),
-        },
-        |a, b| Accumulator {
-            nodes: {
-                let mut combined = a.nodes;
-                combined.extend(b.nodes);
-                combined
-            },
-            ways: {
-                let mut combined = a.ways;
-                combined.extend(b.ways);
-                combined
-            },
-            relations: {
-                let mut combined = a.relations;
-                combined.extend(b.relations);
-                combined
-            },
-        },
-    )?;
-
-    let nodes_data = accumulator.nodes;
-    let ways_data = accumulator.ways;
-    let relations_data = accumulator.relations;
-
-    println!(
-        "Letti {} nodi, {} ways, {} relazioni multipolygon",
-        nodes_data.len(),
-        ways_data.len(),
-        relations_data.len()
-    );
-
+    let spatial = load_primitives_in_bbox("chunks", bbox, ChunkConfig { chunk_size_m: 10000.0 })?;
+    
     // Primo passaggio parallelo: identifica i nodi nel raggio
     println!("--- Fase 2: Analisi nodi nel raggio (in parallelo) ---");
-    let nodi_nel_raggio: HashMap<i64, (f64, f64)> = nodes_data
+    let nodi_nel_raggio: HashMap<i64, (f64, f64)> = spatial
         .par_iter()
-        .filter(|node_data| {
-            entro_raggio(
-                node_data.lat,
-                node_data.lon,
-                centro_lat,
-                centro_lon,
-                raggio_metri,
-            )
+        .filter_map(|p| match &p.primitive {
+            OsmPrimitive::Node(n) => {
+                if entro_raggio(p.lat, p.lon, centro_lat, centro_lon, raggio_metri) {
+                    Some((n.id, (p.lat, p.lon)))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         })
-        .map(|node_data| (node_data.id, (node_data.lat, node_data.lon)))
         .collect();
 
     println!(
@@ -207,50 +91,8 @@ fn stampa_elementi_in_raggio(
     let ConversionResult {
         elementi: elementi_mappa,
         nodi_in_ways,
-    } = converti_elementi_osm(&nodes_data, &ways_data, &relations_data, &nodi_nel_raggio);
+    } = converti_elementi_osm_posizionati(&spatial, &nodi_nel_raggio);
 
-    // Stampa informazioni sugli elementi convertiti
-    let mut contatori: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for elemento in &elementi_mappa {
-        let tipo = match elemento.element_type {
-            map_elements::ElementType::Edificio => "Edificio",
-            map_elements::ElementType::StradaPrincipale => "Strada Principale",
-            map_elements::ElementType::StradaSecondaria => "Strada Secondaria",
-            map_elements::ElementType::StradaLocale => "Strada Locale",
-            map_elements::ElementType::StradaPedonale => "Strada Pedonale",
-            map_elements::ElementType::Ferrovia => "Ferrovia",
-            map_elements::ElementType::Fiume => "Fiume",
-            map_elements::ElementType::Canale => "Canale",
-            map_elements::ElementType::Parco => "Parco",
-            map_elements::ElementType::Acqua => "Acqua",
-            map_elements::ElementType::Foresta => "Foresta",
-            map_elements::ElementType::Boscaglia => "Boscaglia",
-            map_elements::ElementType::Residenziale => "Residenziale",
-            map_elements::ElementType::Commerciale => "Commerciale",
-            map_elements::ElementType::Industriale => "Industriale",
-            map_elements::ElementType::Agricolo => "Agricolo",
-            map_elements::ElementType::Aeroporto => "Aeroporto",
-            map_elements::ElementType::Cimitero => "Cimitero",
-            map_elements::ElementType::CampoSportivo => "Campo Sportivo",
-            map_elements::ElementType::Albero => "Albero",
-            map_elements::ElementType::PuntoInteresse { .. } => "Punto Interesse",
-            map_elements::ElementType::Altro { .. } => "Altro",
-        };
-        *contatori.entry(tipo.to_string()).or_insert(0) += 1;
-    }
-
-    println!("\n--- Riepilogo Elementi Mappa ---");
-    for (tipo, count) in &contatori {
-        println!("{}: {}", tipo, count);
-    }
-    println!(
-        "\nTotale elementi da renderizzare: {}",
-        elementi_mappa.len()
-    );
-    println!(
-        "Relazioni multipolygon processate: {}",
-        relations_data.len()
-    );
 
     // Renderizza la mappa usando gli elementi ad alto livello
     println!("\n--- Rendering mappa ---");
@@ -266,15 +108,46 @@ fn stampa_elementi_in_raggio(
     Ok(())
 }
 
+
+#[allow(dead_code)]
+fn print_from_id(percorso_file: &str, id: i64) -> Result<(), Box<dyn std::error::Error>> {
+    let reader = ElementReader::from_path(percorso_file)?;
+    
+    reader.for_each(|element|
+    {
+        let element_id = match &element {
+            Element::DenseNode(node) => node.id(),
+            Element::Node(node) => node.id(),
+            Element::Way(way) => way.id(),
+            Element::Relation(rel) => rel.id(),
+        };
+        if element_id == id {
+            match &element {
+                Element::DenseNode(node) => println!("{:#?}", node.info()),
+                Element::Node(node) => println!("{:#?}", node.info()),
+                Element::Way(way) => println!("{:#?}", way.info()),
+                Element::Relation(rel) => println!("{:#?}", rel.info()),
+            }
+        }
+    })?;
+
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     // Esempio: coordinate di Milano (puoi modificare queste coordinate)
-    let centro_lat = 45.46362;
-    let centro_lon = 9.28919;
+    let centro_lat = 45.47362;
+    let centro_lon = 9.24919;
     let raggio_metri = 3500.0;
+
+    //print_from_id("nord-ovest-251207.osm.pbf", 159322216)?;
+
+    //return Ok(());
 
     // Usa la nuova funzione per stampare solo gli elementi nel raggio
     stampa_elementi_in_raggio(
-        "nord-ovest-251207.osm.pbf",
         centro_lat,
         centro_lon,
         raggio_metri,

@@ -143,7 +143,7 @@ impl MapElement {
             ElementType::Residenziale => Rgb565::new(200 >> 3, 200 >> 2, 200 >> 3),
             ElementType::Commerciale => Rgb565::new(255 >> 3, 200 >> 2, 200 >> 3),
             ElementType::Industriale => Rgb565::new(150 >> 3, 150 >> 2, 150 >> 3),
-            ElementType::Agricolo => Rgb565::new(255 >> 3, 255 >> 2, 220 >> 3),
+            ElementType::Agricolo => Rgb565::new(155 >> 3, 255 >> 2, 120 >> 3),
             ElementType::Aeroporto => Rgb565::new(220 >> 3, 160 >> 2, 220 >> 3),
             ElementType::Cimitero => Rgb565::new(160 >> 3, 160 >> 2, 160 >> 3),
             ElementType::CampoSportivo => Rgb565::new(0, 28, 0),

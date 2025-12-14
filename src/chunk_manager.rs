@@ -1,0 +1,208 @@
+use crate::spatial_index::PositionedPrimitive;
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+/// Bounding box geografica (lat/lon).
+#[derive(Debug, Clone, Copy)]
+pub struct GeoBBox {
+    pub min_lat: f64,
+    pub min_lon: f64,
+    pub max_lat: f64,
+    pub max_lon: f64,
+}
+
+impl GeoBBox {
+    pub fn normalized(self) -> Self {
+        let (min_lat, max_lat) = if self.min_lat <= self.max_lat {
+            (self.min_lat, self.max_lat)
+        } else {
+            (self.max_lat, self.min_lat)
+        };
+        let (min_lon, max_lon) = if self.min_lon <= self.max_lon {
+            (self.min_lon, self.max_lon)
+        } else {
+            (self.max_lon, self.min_lon)
+        };
+        Self {
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, lat: f64, lon: f64) -> bool {
+        lat >= self.min_lat && lat <= self.max_lat && lon >= self.min_lon && lon <= self.max_lon
+    }
+}
+
+/// Config dei chunk.
+///
+/// Nota: usiamo una griglia su coordinate **WebMercator (EPSG:3857)** in metri,
+/// così un chunk da `chunk_size_m=10_000` è ~10km x 10km.
+#[derive(Debug, Clone, Copy)]
+pub struct ChunkConfig {
+    /// Dimensione chunk in metri (es: 10_000.0 per ~10km).
+    pub chunk_size_m: f64,
+}
+
+impl Default for ChunkConfig {
+    fn default() -> Self {
+        Self {
+            chunk_size_m: 10_000.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ChunkId {
+    x: i32,
+    y: i32,
+}
+
+
+fn chunk_size_tag(cfg: ChunkConfig) -> i64 {
+    cfg.chunk_size_m.round() as i64
+}
+
+fn chunk_file_name(id: ChunkId, cfg: ChunkConfig) -> String {
+    // Un solo directory, filename include chunk size per evitare collisioni tra diverse size.
+    format!("c{}_x{}_y{}.bin", chunk_size_tag(cfg), id.x, id.y)
+}
+
+// ---------------------------
+// WebMercator helpers
+// ---------------------------
+
+const EARTH_RADIUS_M: f64 = 6_378_137.0;
+const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
+
+#[inline]
+fn clamp_lat_for_mercator(lat: f64) -> f64 {
+    lat.clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT)
+}
+
+#[inline]
+fn mercator_x_m(lon_deg: f64) -> f64 {
+    EARTH_RADIUS_M * lon_deg.to_radians()
+}
+
+#[inline]
+fn mercator_y_m(lat_deg: f64) -> f64 {
+    let lat = clamp_lat_for_mercator(lat_deg).to_radians();
+    EARTH_RADIUS_M * (std::f64::consts::FRAC_PI_4 + lat * 0.5).tan().ln()
+}
+
+#[inline]
+fn chunk_id_for_lat_lon(lat: f64, lon: f64, cfg: ChunkConfig) -> ChunkId {
+    let x = mercator_x_m(lon);
+    let y = mercator_y_m(lat);
+    ChunkId {
+        x: (x / cfg.chunk_size_m).floor() as i32,
+        y: (y / cfg.chunk_size_m).floor() as i32,
+    }
+}
+
+fn chunk_range_for_bbox(
+    bbox: GeoBBox,
+    cfg: ChunkConfig,
+) -> (
+    std::ops::RangeInclusive<i32>,
+    std::ops::RangeInclusive<i32>,
+) {
+    let bbox = bbox.normalized();
+    let x1 = mercator_x_m(bbox.min_lon);
+    let x2 = mercator_x_m(bbox.max_lon);
+    let y1 = mercator_y_m(bbox.min_lat);
+    let y2 = mercator_y_m(bbox.max_lat);
+
+    let min_x = (x1.min(x2) / cfg.chunk_size_m).floor() as i32;
+    let max_x = (x1.max(x2) / cfg.chunk_size_m).floor() as i32;
+    let min_y = (y1.min(y2) / cfg.chunk_size_m).floor() as i32;
+    let max_y = (y1.max(y2) / cfg.chunk_size_m).floor() as i32;
+
+    (min_x..=max_x, min_y..=max_y)
+}
+
+/// Salva le primitive geolocalizzate in chunk su disco.
+///
+/// - Chunks “tipo Minecraft”: ogni primitive è assegnata ad un chunk in base al suo (lat,lon)
+///   proiettato in WebMercator.
+/// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
+pub fn save_chunks(spatial: &[PositionedPrimitive], dir: &str, cfg: ChunkConfig) -> std::io::Result<()> {
+    let root = Path::new(dir);
+    fs::create_dir_all(root)?;
+
+    let mut buckets: HashMap<ChunkId, Vec<PositionedPrimitive>> = HashMap::new();
+    for p in spatial {
+        let id = chunk_id_for_lat_lon(p.lat, p.lon, cfg);
+        buckets.entry(id).or_default().push(p.clone());
+    }
+
+    // Scrivi ogni chunk (nessuna esigenza di atomicità: non li leggiamo mentre li generiamo).
+    buckets
+        .into_par_iter()
+        .try_for_each(|(id, mut prims)| -> std::io::Result<()> {
+            // Ordine deterministico, utile per diff/debug (non è fondamentale).
+            prims.sort_by(|a, b| {
+                a.lat
+                    .partial_cmp(&b.lat)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.lon.partial_cmp(&b.lon).unwrap_or(std::cmp::Ordering::Equal))
+            });
+
+            let path = root.join(chunk_file_name(id, cfg));
+            // Più veloce di tante piccole write: serializza in RAM e scrive in un colpo solo.
+            let bytes =
+                bincode::encode_to_vec(&prims, bincode::config::standard()).map_err(std::io::Error::other)?;
+            fs::write(&path, bytes)?;
+            Ok(())
+        })?;
+
+    Ok(())
+}
+
+/// Legge automaticamente tutti i chunk che intersecano `bbox` e ritorna le primitive
+/// contenute dentro `bbox` (filtrate in lat/lon).
+pub fn load_primitives_in_bbox(
+    dir: &str,
+    bbox: GeoBBox,
+    cfg: ChunkConfig,
+) -> std::io::Result<Vec<PositionedPrimitive>> {
+    let root = Path::new(dir);
+    let bbox = bbox.normalized();
+    let (xs, ys) = chunk_range_for_bbox(bbox, cfg);
+    let total_to_check = xs.clone().count() * ys.clone().count();
+
+    let mut out: Vec<PositionedPrimitive> = Vec::new();
+    let mut loaded_chunks: usize = 0;
+    for x in xs {
+        for y in ys.clone() {
+            let id = ChunkId { x, y };
+            // Formato: c{size}_x{X}_y{Y}.bin
+            let new_path = root.join(chunk_file_name(id, cfg));
+            let bytes = match fs::read(&new_path) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            loaded_chunks += 1;
+
+            let prims: Vec<PositionedPrimitive> =
+                bincode::decode_from_slice(&bytes, bincode::config::standard())
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+                    .0;
+
+            out.extend(prims.into_iter().filter(|p| bbox.contains(p.lat, p.lon)));
+        }
+    }
+
+    log::info!(
+        "Loaded {loaded_chunks}/{total_to_check} chunks from '{dir}' for bbox={bbox:?} chunk_size_m={}",
+        cfg.chunk_size_m
+    );
+    Ok(out)
+}
