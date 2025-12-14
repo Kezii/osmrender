@@ -75,7 +75,6 @@ impl embedded_graphics_core::geometry::OriginDimensions for ImageFramebuffer {
 /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
 pub fn renderizza_mappa(
     elementi: &[MapElement],
-    nodi_in_ways: &std::collections::HashSet<i64>,
     centro_lat: f64,
     centro_lon: f64,
     raggio_metri: f64,
@@ -155,7 +154,7 @@ pub fn renderizza_mappa(
     engine.camera.set_fovy(std::f32::consts::PI / 6.0);
 
     // Usa rendering_adapter per creare le mesh
-    let mesh_container = converti_a_mesh(elementi, nodi_in_ways, params);
+    let mesh_container = converti_a_mesh(elementi, params);
     let meshes = mesh_container.get_meshes();
 
     // Renderizza tutte le mesh

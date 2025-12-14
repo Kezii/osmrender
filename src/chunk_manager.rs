@@ -1,11 +1,11 @@
 use crate::spatial_index::PositionedPrimitive;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 /// Bounding box geografica (lat/lon).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct GeoBBox {
     pub min_lat: f64,
     pub min_lon: f64,
@@ -36,6 +36,17 @@ impl GeoBBox {
     #[inline]
     pub fn contains(&self, lat: f64, lon: f64) -> bool {
         lat >= self.min_lat && lat <= self.max_lat && lon >= self.min_lon && lon <= self.max_lon
+    }
+
+    #[inline]
+    pub fn intersects(&self, other: &GeoBBox) -> bool {
+        // Assumiamo bbox normalizzate; per sicurezza normalizziamo localmente.
+        let a = (*self).clone().normalized();
+        let b = other.clone().normalized();
+        !(a.max_lat < b.min_lat
+            || a.min_lat > b.max_lat
+            || a.max_lon < b.min_lon
+            || a.min_lon > b.max_lon)
     }
 }
 
@@ -97,6 +108,7 @@ fn mercator_y_m(lat_deg: f64) -> f64 {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn chunk_id_for_lat_lon(lat: f64, lon: f64, cfg: ChunkConfig) -> ChunkId {
     let x = mercator_x_m(lon);
     let y = mercator_y_m(lat);
@@ -127,32 +139,38 @@ fn chunk_range_for_bbox(
     (min_x..=max_x, min_y..=max_y)
 }
 
+/// Una primitive OSM associata alla sua **bounding box geografica**.
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+pub struct ChunkPrimitive<T> {
+    pub bbox: GeoBBox,
+    pub primitive: T,
+}
+
 /// Salva le primitive geolocalizzate in chunk su disco.
 ///
 /// - Chunks “tipo Minecraft”: ogni primitive è assegnata ad un chunk in base al suo (lat,lon)
 ///   proiettato in WebMercator.
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
-pub fn save_chunks(spatial: &[PositionedPrimitive], dir: &str, cfg: ChunkConfig) -> std::io::Result<()> {
+pub fn save_chunks<T: bincode::Encode + Clone>(spatial: &[ChunkPrimitive<T>], dir: &str, cfg: ChunkConfig) -> std::io::Result<()> {
     let root = Path::new(dir);
     fs::create_dir_all(root)?;
 
-    let mut buckets: HashMap<ChunkId, Vec<PositionedPrimitive>> = HashMap::new();
+    let mut buckets: HashMap<ChunkId, Vec<ChunkPrimitive<T>>> = HashMap::new();
     for p in spatial {
-        let id = chunk_id_for_lat_lon(p.lat, p.lon, cfg);
-        buckets.entry(id).or_default().push(p.clone());
+        let (xs, ys) = chunk_range_for_bbox(p.bbox.clone(), cfg);
+        for x in xs {
+            for y in ys.clone() {
+                let id = ChunkId { x, y };
+                buckets.entry(id).or_default().push(p.clone());
+            }
+        }
     }
 
     // Scrivi ogni chunk (nessuna esigenza di atomicità: non li leggiamo mentre li generiamo).
     buckets
-        .into_par_iter()
-        .try_for_each(|(id, mut prims)| -> std::io::Result<()> {
-            // Ordine deterministico, utile per diff/debug (non è fondamentale).
-            prims.sort_by(|a, b| {
-                a.lat
-                    .partial_cmp(&b.lat)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.lon.partial_cmp(&b.lon).unwrap_or(std::cmp::Ordering::Equal))
-            });
+        .into_iter()
+        .try_for_each(|(id, prims)| -> std::io::Result<()> {
+
 
             let path = root.join(chunk_file_name(id, cfg));
             // Più veloce di tante piccole write: serializza in RAM e scrive in un colpo solo.
@@ -167,17 +185,18 @@ pub fn save_chunks(spatial: &[PositionedPrimitive], dir: &str, cfg: ChunkConfig)
 
 /// Legge automaticamente tutti i chunk che intersecano `bbox` e ritorna le primitive
 /// contenute dentro `bbox` (filtrate in lat/lon).
-pub fn load_primitives_in_bbox(
+pub fn load_primitives_in_bbox<T: bincode::Decode<()> + Clone>(
     dir: &str,
-    bbox: GeoBBox,
+    bbox: &GeoBBox,
     cfg: ChunkConfig,
-) -> std::io::Result<Vec<PositionedPrimitive>> {
+) -> std::io::Result<Vec<ChunkPrimitive<T>>> {
     let root = Path::new(dir);
-    let bbox = bbox.normalized();
-    let (xs, ys) = chunk_range_for_bbox(bbox, cfg);
+    let bbox = bbox.clone().normalized();
+    let (xs, ys) = chunk_range_for_bbox(bbox.clone(), cfg);
     let total_to_check = xs.clone().count() * ys.clone().count();
 
-    let mut out: Vec<PositionedPrimitive> = Vec::new();
+    let mut out: Vec<ChunkPrimitive<T>> = Vec::new();
+    //let mut seen: HashSet<(u8, i64)> = HashSet::new();
     let mut loaded_chunks: usize = 0;
     for x in xs {
         for y in ys.clone() {
@@ -191,12 +210,20 @@ pub fn load_primitives_in_bbox(
             };
             loaded_chunks += 1;
 
-            let prims: Vec<PositionedPrimitive> =
+            let prims: Vec<ChunkPrimitive<T>> =
                 bincode::decode_from_slice(&bytes, bincode::config::standard())
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
                     .0;
 
-            out.extend(prims.into_iter().filter(|p| bbox.contains(p.lat, p.lon)));
+            for p in prims {
+                if !p.bbox.intersects(&bbox) {
+                    continue;
+                }
+                //let key = p.osm_key();
+                //if seen.insert(key) {
+                    out.push(p);
+                //}
+            }
         }
     }
 

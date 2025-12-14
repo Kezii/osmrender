@@ -216,11 +216,23 @@ fn triangola_poligono_con_buchi(
     // Triangola usando earcut con buchi
     let mut triangles = Vec::new();
     let mut earcut = Earcut::new();
-    earcut.earcut(
-        all_vertices_2d.iter().copied(),
-        &hole_indices,
-        &mut triangles,
-    );
+
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        earcut.earcut(
+            all_vertices_2d.iter().copied(),
+            &hole_indices,
+            &mut triangles,
+        );
+    }));
+    if res.is_err() {
+        debug!(
+            "⚠️  triangola_poligono_con_buchi: earcut ha panicato (outer_len={}, holes={}, total_vertices={}), fallback a Lines",
+            outer_clean.len(),
+            inner_rings_clean_2d.len(),
+            all_vertices_2d.len()
+        );
+        return (Vec::new(), Vec::new());
+    }
 
     if triangles.is_empty() {
         debug!(
@@ -310,7 +322,16 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     // Triangola usando earcut
     let mut triangles = Vec::new();
     let mut earcut = Earcut::new();
-    earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        earcut.earcut(vertices_2d.iter().copied(), hole_indices, &mut triangles);
+    }));
+    if res.is_err() {
+        debug!(
+            "⚠️  triangola_poligono: earcut ha panicato (len={}), fallback a Lines",
+            vertices_2d.len()
+        );
+        return Vec::new();
+    }
 
     if triangles.is_empty() {
         debug!(
@@ -390,7 +411,6 @@ impl MeshContainer {
 /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
 pub fn converti_a_mesh(
     elementi: &[MapElement],
-    nodi_in_ways: &std::collections::HashSet<i64>,
     params: ConversionParams,
 ) -> MeshContainer {
     if elementi.is_empty() {
@@ -421,13 +441,6 @@ pub fn converti_a_mesh(
 
         // Gestisci punti (alberi, punti interesse)
         if elemento.is_punto() {
-            // Verifica se questo nodo (identificato dal suo ID) fa parte di una way
-            // L'ID del MapElement per un punto corrisponde all'ID del nodo OSM originale
-            if nodi_in_ways.contains(&elemento.id()) {
-                // Questo punto è già parte di una linea o poligono, saltalo
-                continue;
-            }
-
             if let Some((lat, lon)) = coordinate.first() {
                 let [x, y, z] = params.to_3d(*lat, *lon, priority);
                 let (radius_pixels, n_points) = match elemento.element_type {

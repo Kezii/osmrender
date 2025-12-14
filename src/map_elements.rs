@@ -1,8 +1,10 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
+use crate::chunk_manager::GeoBBox;
+
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, bincode::Encode, bincode::Decode)]
 pub struct MapElement {
     /// ID univoco dell'elemento
     pub id: i64,
@@ -18,8 +20,38 @@ pub struct MapElement {
     pub element_type: ElementType,
 }
 
+impl MapElement {
+    pub fn bbox(&self) -> GeoBBox {
+        debug_assert!(
+            !self.vertices.is_empty(),
+            "MapElement::bbox() requires at least one vertex"
+        );
+        GeoBBox {
+            min_lat: self
+                .vertices
+                .iter()
+                .map(|(lat, _)| *lat)
+                .fold(f64::INFINITY, f64::min),
+            max_lat: self
+                .vertices
+                .iter()
+                .map(|(lat, _)| *lat)
+                .fold(f64::NEG_INFINITY, f64::max),
+            min_lon: self
+                .vertices
+                .iter()
+                .map(|(_, lon)| *lon)
+                .fold(f64::INFINITY, f64::min),
+            max_lon: self
+                .vertices
+                .iter()
+                .map(|(_, lon)| *lon)
+                .fold(f64::NEG_INFINITY, f64::max),
+        }
+    }
+}
 /// Enum che rappresenta il tipo specifico dell'elemento della mappa
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, bincode::Encode, bincode::Decode)]
 pub enum ElementType {
     /// Edificio (poligono chiuso)
     Edificio,

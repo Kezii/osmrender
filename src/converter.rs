@@ -1,18 +1,10 @@
 use log::debug;
 use serde::{Deserialize, Serialize};
 
-use crate::map_elements::{ElementType, MapElement};
+use crate::{map_elements::{ElementType, MapElement}, raw_osm_reader::{NodeData, RawOsmData, RelationData, RelationMemberType, WayData}};
 use std::collections::HashMap;
-use crate::spatial_index::{OsmPrimitive, PositionedPrimitive};
+// use crate::spatial_index::{OsmPrimitive, PositionedPrimitive};
 
-/// Dati di un nodo OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
-pub struct NodeData {
-    pub id: i64,
-    pub lat: f64,
-    pub lon: f64,
-    pub tags: Vec<(String, String)>,
-}
 
 /// nell'array spatial non serve ripetere lat e lon
 #[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
@@ -21,47 +13,10 @@ pub struct SpatialNodeData {
     pub tags: Vec<(String, String)>,
 }
 
-/// Dati di una way OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
-pub struct WayData {
-    pub id: i64,
-    pub node_refs: Vec<i64>,
-    pub tags: Vec<(String, String)>,
-}
-
-/// Dati di una relazione OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
-pub struct RelationData {
-    pub id: i64,
-    pub tags: Vec<(String, String)>,
-    pub members: Vec<RelationMember>,
-}
-
-/// Membro di una relazione OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
-pub struct RelationMember {
-    pub member_type: RelationMemberType,
-    pub member_id: i64,
-    pub role: String,
-}
-
-/// Tipo di membro di una relazione
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
-pub enum RelationMemberType {
-    Node,
-    Way,
-    Relation,
-}
-
 /// Converte un nodo OSM in un elemento della mappa
 pub fn converti_nodo(
     node_data: &NodeData,
-    nodi_nel_raggio: &HashMap<i64, (f64, f64)>,
 ) -> Option<MapElement> {
-    // Verifica che il nodo sia nel raggio
-    if !nodi_nel_raggio.contains_key(&node_data.id) {
-        return None;
-    }
 
     let name = node_data
         .tags
@@ -122,13 +77,13 @@ pub fn converti_nodo(
 /// Converte una way OSM in un elemento della mappa
 pub fn converti_way(
     way_data: &WayData,
-    nodi_nel_raggio: &HashMap<i64, (f64, f64)>,
+    node_index: &HashMap<i64, (f64, f64)>,
 ) -> Option<MapElement> {
     // Raccogli i nodi della way che sono nel raggio
     let vertices: Vec<(f64, f64)> = way_data
         .node_refs
         .iter()
-        .filter_map(|&node_id| nodi_nel_raggio.get(&node_id).copied())
+        .filter_map(|&node_id| node_index.get(&node_id).copied())
         .collect();
 
     if vertices.is_empty() {
@@ -378,7 +333,7 @@ pub struct ConversionResult {
 fn converti_multipolygon(
     relation_data: &RelationData,
     ways_data: &HashMap<i64, &WayData>,
-    nodi_nel_raggio: &HashMap<i64, (f64, f64)>,
+    node_index: &HashMap<i64, (f64, f64)>,
 ) -> Option<MapElement> {
     // Raccogli gli anelli outer e inner
     let mut outer_ways: Vec<&WayData> = Vec::new();
@@ -407,7 +362,7 @@ fn converti_multipolygon(
     #[allow(clippy::type_complexity)]
     fn combina_ways_in_ring(
         ways: &[&WayData],
-        nodi_nel_raggio: &HashMap<i64, (f64, f64)>,
+        node_index: &HashMap<i64, (f64, f64)>,
     ) -> Option<Vec<(f64, f64)>> {
         if ways.is_empty() {
             return None;
@@ -419,7 +374,7 @@ fn converti_multipolygon(
             let mut node_ids = Vec::new();
             let mut vertices = Vec::new();
             for &node_id in &way.node_refs {
-                if let Some(&coord) = nodi_nel_raggio.get(&node_id) {
+                if let Some(&coord) = node_index.get(&node_id) {
                     node_ids.push(node_id);
                     vertices.push(coord);
                 }
@@ -584,7 +539,7 @@ fn converti_multipolygon(
         }
     }
 
-    let outer_vertices = match combina_ways_in_ring(&outer_ways, nodi_nel_raggio) {
+    let outer_vertices = match combina_ways_in_ring(&outer_ways, node_index) {
         Some(vertices) => vertices,
         None => {
             debug!(
@@ -606,7 +561,7 @@ fn converti_multipolygon(
             let vertices: Vec<(f64, f64)> = way
                 .node_refs
                 .iter()
-                .filter_map(|&node_id| nodi_nel_raggio.get(&node_id).copied())
+                .filter_map(|&node_id| node_index.get(&node_id).copied())
                 .collect();
             if vertices.len() >= 3 {
                 Some(vertices)
@@ -661,20 +616,23 @@ fn converti_multipolygon(
 /// Converte una collezione di primitive OSM già "posizionate" in elementi della mappa.
 /// Versione memory-friendly: non richiede i 3 array separati (nodes/ways/relations).
 pub fn converti_elementi_osm_posizionati(
-    spatial: &[PositionedPrimitive],
-    nodi_nel_raggio: &HashMap<i64, (f64, f64)>,
-) -> ConversionResult {
+    accumulator: RawOsmData,
+) -> Vec<MapElement> {
     use rayon::prelude::*;
 
     let mut elementi: Vec<MapElement> = Vec::new();
 
-    // Mappa ways per accesso rapido (senza clone)
-    let ways_map: HashMap<i64, &WayData> = spatial
+    // Indice rapido id_nodo -> (lat, lon). A questo punto `accumulator.nodes` è già filtrato.
+    let node_index: HashMap<i64, (f64, f64)> = accumulator
+        .nodes
         .iter()
-        .filter_map(|p| match &p.primitive {
-            OsmPrimitive::Way(w) => Some((w.id, w)),
-            _ => None,
-        })
+        .map(|n| (n.id, (n.lat, n.lon)))
+        .collect();
+
+    // Mappa ways per accesso rapido (senza clone)
+    let ways_map: HashMap<i64, &WayData> = accumulator.ways
+        .iter()
+        .map(|w| (w.id, w))
         .collect();
     let ways_map = std::sync::Arc::new(ways_map);
 
@@ -683,40 +641,29 @@ pub fn converti_elementi_osm_posizionati(
         .values()
         .flat_map(|w| {
             w.node_refs
-                .iter()
-                .copied()
-                .filter(|node_id| nodi_nel_raggio.contains_key(node_id))
+                .iter().copied()
         })
         .collect();
 
     // Converti i nodi in parallelo
-    let nodi_elementi: Vec<MapElement> = spatial
+    let nodi_elementi: Vec<MapElement> = accumulator.nodes
         .par_iter()
-        .filter_map(|p| match &p.primitive {
-            OsmPrimitive::Node(n) => converti_nodo(&NodeData { id: n.id, tags: n.tags.clone(), lat: p.lat, lon: p.lon }, nodi_nel_raggio),
-            _ => None,
-        })
+        // Non generare punti per nodi che sono già parte di una way (saranno resi come linea/poligono)
+        // Nota: questo rispecchia il comportamento in `rendering_adapter::converti_a_mesh` che li skippa.
+        .filter(|n| !nodi_in_ways.contains(&n.id))
+        .filter_map(converti_nodo)
         .collect();
 
     // Converti le ways in parallelo
-    let ways_elementi: Vec<MapElement> = spatial
+    let ways_elementi: Vec<MapElement> = accumulator.ways
         .par_iter()
-        .filter_map(|p| match &p.primitive {
-            OsmPrimitive::Way(w) => converti_way(w, nodi_nel_raggio),
-            _ => None,
-        })
+        .filter_map(|w| converti_way(w, &node_index))
         .collect();
 
     // Converti le relazioni multipolygon in parallelo
-    let relations_elementi: Vec<MapElement> = spatial
+    let relations_elementi: Vec<MapElement> = accumulator.relations
         .par_iter()
-        .filter_map(|p| match &p.primitive {
-            OsmPrimitive::Relation(r) => {
-                let ways_map = ways_map.clone();
-                converti_multipolygon(r, &ways_map, nodi_nel_raggio)
-            }
-            _ => None,
-        })
+        .filter_map(|r| converti_multipolygon(r, &ways_map, &node_index))
         .collect();
 
     elementi.extend(nodi_elementi);
@@ -726,8 +673,7 @@ pub fn converti_elementi_osm_posizionati(
     // Ordina per ID per garantire consistenza
     //elementi.sort_by_key(|e| e.id());
 
-    ConversionResult {
-        elementi,
-        nodi_in_ways,
-    }
+
+    elementi
+    
 }
