@@ -6,12 +6,14 @@ use osmrender::map_elements::MapElement;
 use osmrender::raw_osm_reader::read_raw_osm_file;
 use osmrender::spatial_index::{PositionedPrimitive, build_spatial_index};
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
 
     let input = "nord-ovest-251207.osm.pbf";
     let out_dir = "chunks";
-    let cfg = ChunkConfig { chunk_size_m: 20000.0 };
+    let cfg = ChunkConfig {
+        chunk_size_m: 20000.0,
+    };
 
     println!("Input: {}", input);
     println!("Output dir: {}", out_dir);
@@ -20,7 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Fase 1: Lettura e raccolta elementi (in parallelo) ---");
 
     let accumulator = read_raw_osm_file(input)?;
-
 
     // Rappresentazione intermedia: primitive OSM indicizzate per posizione (griglia lat/lon)
     // Nota: per ways/relations la posizione è una "rappresentativa" (centro bbox dei nodi).
@@ -32,11 +33,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //println!("Primitive posizionate: {}", spatial.len());
 
     println!("--- Salvataggio chunk ---");
-    let spatial = elementi_mappa.iter().map(|e| ChunkPrimitive { bbox: e.bbox(), primitive: e.clone() }).collect::<Vec<_>>();
+    let spatial = elementi_mappa
+        .iter()
+        .map(|e| ChunkPrimitive {
+            bbox: e.bbox(),
+            primitive: e.clone(),
+        })
+        .collect::<Vec<_>>();
     save_chunks::<MapElement>(&spatial, out_dir, cfg)?;
     println!("Done.");
 
     Ok(())
 }
-
-

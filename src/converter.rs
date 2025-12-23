@@ -1,23 +1,22 @@
 use log::debug;
 use serde::{Deserialize, Serialize};
 
-use crate::{map_elements::{ElementType, MapElement}, raw_osm_reader::{NodeData, RawOsmData, RelationData, RelationMemberType, WayData}};
+use crate::{
+    map_elements::{ElementType, MapElement},
+    raw_osm_reader::{NodeData, RawOsmData, RelationData, RelationMemberType, WayData},
+};
 use std::collections::HashMap;
 // use crate::spatial_index::{OsmPrimitive, PositionedPrimitive};
 
-
 /// nell'array spatial non serve ripetere lat e lon
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct SpatialNodeData {
     pub id: i64,
     pub tags: Vec<(String, String)>,
 }
 
 /// Converte un nodo OSM in un elemento della mappa
-pub fn converti_nodo(
-    node_data: &NodeData,
-) -> Option<MapElement> {
-
+pub fn converti_nodo(node_data: &NodeData) -> Option<MapElement> {
     let name = node_data
         .tags
         .iter()
@@ -615,9 +614,7 @@ fn converti_multipolygon(
 
 /// Converte una collezione di primitive OSM già "posizionate" in elementi della mappa.
 /// Versione memory-friendly: non richiede i 3 array separati (nodes/ways/relations).
-pub fn converti_elementi_osm_posizionati(
-    accumulator: RawOsmData,
-) -> Vec<MapElement> {
+pub fn converti_elementi_osm_posizionati(accumulator: RawOsmData) -> Vec<MapElement> {
     use rayon::prelude::*;
 
     let mut elementi: Vec<MapElement> = Vec::new();
@@ -630,23 +627,18 @@ pub fn converti_elementi_osm_posizionati(
         .collect();
 
     // Mappa ways per accesso rapido (senza clone)
-    let ways_map: HashMap<i64, &WayData> = accumulator.ways
-        .iter()
-        .map(|w| (w.id, w))
-        .collect();
+    let ways_map: HashMap<i64, &WayData> = accumulator.ways.iter().map(|w| (w.id, w)).collect();
     let ways_map = std::sync::Arc::new(ways_map);
 
     // Prima passata: raccogli tutti gli ID dei nodi usati dalle ways
     let nodi_in_ways: std::collections::HashSet<i64> = ways_map
         .values()
-        .flat_map(|w| {
-            w.node_refs
-                .iter().copied()
-        })
+        .flat_map(|w| w.node_refs.iter().copied())
         .collect();
 
     // Converti i nodi in parallelo
-    let nodi_elementi: Vec<MapElement> = accumulator.nodes
+    let nodi_elementi: Vec<MapElement> = accumulator
+        .nodes
         .par_iter()
         // Non generare punti per nodi che sono già parte di una way (saranno resi come linea/poligono)
         // Nota: questo rispecchia il comportamento in `rendering_adapter::converti_a_mesh` che li skippa.
@@ -655,13 +647,15 @@ pub fn converti_elementi_osm_posizionati(
         .collect();
 
     // Converti le ways in parallelo
-    let ways_elementi: Vec<MapElement> = accumulator.ways
+    let ways_elementi: Vec<MapElement> = accumulator
+        .ways
         .par_iter()
         .filter_map(|w| converti_way(w, &node_index))
         .collect();
 
     // Converti le relazioni multipolygon in parallelo
-    let relations_elementi: Vec<MapElement> = accumulator.relations
+    let relations_elementi: Vec<MapElement> = accumulator
+        .relations
         .par_iter()
         .filter_map(|r| converti_multipolygon(r, &ways_map, &node_index))
         .collect();
@@ -673,7 +667,5 @@ pub fn converti_elementi_osm_posizionati(
     // Ordina per ID per garantire consistenza
     //elementi.sort_by_key(|e| e.id());
 
-
     elementi
-    
 }

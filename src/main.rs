@@ -1,10 +1,13 @@
-use osmrender::chunk_manager::{ChunkConfig, GeoBBox, load_primitives_in_bbox};
-use osmrender::map_elements::MapElement;
+use osmrender::chunk_manager::{ChunkConfig, GeoBBox, load_chunks_for_bbox};
+use osmrender::map_elements::{ElementType, MapElement};
 use osmrender::raw_osm_reader::{RawOsmData, RelationMemberType};
 use std::collections::HashSet;
 use std::time::Instant;
 
 use osmrender::render;
+
+/// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
+const SHOW_CHUNK_BORDERS: bool = true;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -34,32 +37,31 @@ fn stampa_elementi_in_raggio(
     centro_lon: f64,
     raggio_metri: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     //let mut spatial = load_primitives_in_bbox("chunks", bbox, ChunkConfig { chunk_size_m: 10000.0 })?;
-    /* 
-    let accumulator = read_raw_osm_file("nord-ovest-251207.osm.pbf")?;
+    /*
+        let accumulator = read_raw_osm_file("nord-ovest-251207.osm.pbf")?;
 
 
-    // Primo passaggio parallelo: identifica i nodi nel raggio
-    println!("--- Fase 2: Analisi nodi nel raggio (in parallelo) ---");
+        // Primo passaggio parallelo: identifica i nodi nel raggio
+        println!("--- Fase 2: Analisi nodi nel raggio (in parallelo) ---");
 
-    //let accumulator = filtra_raw_osm_data(accumulator, centro_lat, centro_lon, raggio_metri);
+        //let accumulator = filtra_raw_osm_data(accumulator, centro_lat, centro_lon, raggio_metri);
 
-    println!(
-        "Trovati {} nodi nel raggio di {:.0} metri\n",
-        accumulator.nodes.len(),
-        raggio_metri
-    );
+        println!(
+            "Trovati {} nodi nel raggio di {:.0} metri\n",
+            accumulator.nodes.len(),
+            raggio_metri
+        );
 
-    // Fase 3: Conversione da elementi OSM a elementi della mappa ad alto livello
-    println!("--- Fase 3: Conversione elementi OSM in elementi mappa (in parallelo) ---");
-    println!("Centro: lat {:.6}, lon {:.6}", centro_lat, centro_lon);
-    println!("Raggio: {:.0} metri\n", raggio_metri);
+        // Fase 3: Conversione da elementi OSM a elementi della mappa ad alto livello
+        println!("--- Fase 3: Conversione elementi OSM in elementi mappa (in parallelo) ---");
+        println!("Centro: lat {:.6}, lon {:.6}", centro_lat, centro_lon);
+        println!("Raggio: {:.0} metri\n", raggio_metri);
 
-    // Converti nodi, ways e relazioni in elementi della mappa ad alto livello
-    let elementi_mappa = converti_elementi_osm_posizionati(accumulator);
+        // Converti nodi, ways e relazioni in elementi della mappa ad alto livello
+        let elementi_mappa = converti_elementi_osm_posizionati(accumulator);
 
-*/
+    */
 
     let now = Instant::now();
     let bbox = GeoBBox {
@@ -70,12 +72,43 @@ fn stampa_elementi_in_raggio(
     };
 
     //let mut spatial = load_primitives_in_bbox("chunks", bbox, ChunkConfig { chunk_size_m: 10000.0 })?;
-    let elementi_mappa = load_primitives_in_bbox::<MapElement>("chunks", &bbox, ChunkConfig { chunk_size_m: 20000.0 })?;
+    let cfg = ChunkConfig {
+        chunk_size_m: 20000.0,
+    };
+    let chunks = load_chunks_for_bbox::<MapElement>("chunks", &bbox, cfg)?;
 
     let elapsed = now.elapsed();
     println!("Tempo di caricamento chunk: {:?}", elapsed);
 
-    let elementi_mappa = elementi_mappa.iter().map(|e| e.primitive.clone()).collect::<Vec<_>>();
+    let chunk_bboxes = chunks.iter().map(|c| c.bbox()).collect::<Vec<_>>();
+    let elementi_mappa = chunks
+        .iter()
+        .flat_map(|e| e.data.iter())
+        .collect::<Vec<_>>();
+
+    let mut elementi_mappa = elementi_mappa
+        .iter()
+        .map(|e| e.primitive.clone())
+        .collect::<Vec<_>>();
+
+    if SHOW_CHUNK_BORDERS {
+        for (i, cb) in chunk_bboxes.into_iter().enumerate() {
+            let verts = vec![
+                (cb.min_lat, cb.min_lon),
+                (cb.min_lat, cb.max_lon),
+                (cb.max_lat, cb.max_lon),
+                (cb.max_lat, cb.min_lon),
+                (cb.min_lat, cb.min_lon),
+            ];
+            elementi_mappa.push(MapElement {
+                id: -1 - (i as i64),
+                vertices: verts,
+                inner_rings: Vec::new(),
+                element_type: ElementType::ChunkBorder,
+            });
+        }
+    }
+
     let elapsed = now.elapsed();
     println!("Tempo di conversione elementi mappa: {:?}", elapsed);
 
@@ -93,19 +126,13 @@ fn stampa_elementi_in_raggio(
     Ok(())
 }
 
-
-pub fn filtra_map_elements(
-    elementi_mappa: Vec<MapElement>,
-    bbox: &GeoBBox,
-) -> Vec<MapElement> {
-
+pub fn filtra_map_elements(elementi_mappa: Vec<MapElement>, bbox: &GeoBBox) -> Vec<MapElement> {
     elementi_mappa
         .iter()
         .filter(|e| bbox.intersects(&e.bbox()))
         .cloned()
         .collect()
 }
-
 
 pub fn filtra_raw_osm_data(
     accumulator: RawOsmData,
@@ -164,25 +191,19 @@ pub fn filtra_raw_osm_data(
     }
 }
 
-
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     // Esempio: coordinate di Milano (puoi modificare queste coordinate)
     let centro_lat = 45.47362;
     let centro_lon = 9.24919;
-    let raggio_metri = 500.0;
+    let raggio_metri = 10500.0;
 
     //print_from_id("nord-ovest-251207.osm.pbf", 159322216)?;
 
     //return Ok(());
 
     // Usa la nuova funzione per stampare solo gli elementi nel raggio
-    stampa_elementi_in_raggio(
-        centro_lat,
-        centro_lon,
-        raggio_metri,
-    )?;
+    stampa_elementi_in_raggio(centro_lat, centro_lon, raggio_metri)?;
 
     Ok(())
 }

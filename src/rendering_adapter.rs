@@ -409,10 +409,7 @@ impl MeshContainer {
 
 /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
 /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
-pub fn converti_a_mesh(
-    elementi: &[MapElement],
-    params: ConversionParams,
-) -> MeshContainer {
+pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> MeshContainer {
     if elementi.is_empty() {
         return MeshContainer::new(Vec::new());
     }

@@ -3,11 +3,8 @@ use std::collections::HashMap;
 use osmpbf::{Element, ElementReader};
 use serde::{Deserialize, Serialize};
 
-
-
-
 /// Dati di un nodo OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct NodeData {
     pub id: i64,
     pub lat: f64,
@@ -15,9 +12,8 @@ pub struct NodeData {
     pub tags: Vec<(String, String)>,
 }
 
-
 /// Dati di una way OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct WayData {
     pub id: i64,
     pub node_refs: Vec<i64>,
@@ -25,7 +21,7 @@ pub struct WayData {
 }
 
 /// Dati di una relazione OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct RelationData {
     pub id: i64,
     pub tags: Vec<(String, String)>,
@@ -33,7 +29,7 @@ pub struct RelationData {
 }
 
 /// Membro di una relazione OSM
-#[derive(Clone, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct RelationMember {
     pub member_type: RelationMemberType,
     pub member_id: i64,
@@ -41,13 +37,14 @@ pub struct RelationMember {
 }
 
 /// Tipo di membro di una relazione
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum RelationMemberType {
     Node,
     Way,
     Relation,
 }
-
 
 #[derive(Clone)]
 pub struct RawOsmData {
@@ -56,9 +53,7 @@ pub struct RawOsmData {
     pub relations: Vec<RelationData>,
 }
 
-
 pub fn read_raw_osm_file(path: &str) -> Result<RawOsmData, Box<dyn std::error::Error>> {
-
     let reader = ElementReader::from_path(path)?;
     let accumulator = reader.par_map_reduce(
         |element| {
@@ -184,4 +179,3 @@ pub fn read_raw_osm_file(path: &str) -> Result<RawOsmData, Box<dyn std::error::E
 
     Ok(accumulator)
 }
-

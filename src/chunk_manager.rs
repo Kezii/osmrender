@@ -1,4 +1,5 @@
 use crate::spatial_index::PositionedPrimitive;
+use log::info;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -69,11 +70,10 @@ impl Default for ChunkConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ChunkId {
+pub struct ChunkId {
     x: i32,
     y: i32,
 }
-
 
 fn chunk_size_tag(cfg: ChunkConfig) -> i64 {
     cfg.chunk_size_m.round() as i64
@@ -108,6 +108,19 @@ fn mercator_y_m(lat_deg: f64) -> f64 {
 }
 
 #[inline]
+fn lon_deg_from_mercator_x_m(x_m: f64) -> f64 {
+    (x_m / EARTH_RADIUS_M).to_degrees()
+}
+
+#[inline]
+fn lat_deg_from_mercator_y_m(y_m: f64) -> f64 {
+    // Inversa di WebMercator:
+    // lat = 2*atan(exp(y/R)) - pi/2
+    let lat_rad = 2.0 * (y_m / EARTH_RADIUS_M).exp().atan() - std::f64::consts::FRAC_PI_2;
+    lat_rad.to_degrees()
+}
+
+#[inline]
 #[allow(dead_code)]
 fn chunk_id_for_lat_lon(lat: f64, lon: f64, cfg: ChunkConfig) -> ChunkId {
     let x = mercator_x_m(lon);
@@ -121,10 +134,7 @@ fn chunk_id_for_lat_lon(lat: f64, lon: f64, cfg: ChunkConfig) -> ChunkId {
 fn chunk_range_for_bbox(
     bbox: GeoBBox,
     cfg: ChunkConfig,
-) -> (
-    std::ops::RangeInclusive<i32>,
-    std::ops::RangeInclusive<i32>,
-) {
+) -> (std::ops::RangeInclusive<i32>, std::ops::RangeInclusive<i32>) {
     let bbox = bbox.normalized();
     let x1 = mercator_x_m(bbox.min_lon);
     let x2 = mercator_x_m(bbox.max_lon);
@@ -139,6 +149,27 @@ fn chunk_range_for_bbox(
     (min_x..=max_x, min_y..=max_y)
 }
 
+fn geo_bbox_for_chunk_id(id: ChunkId, cfg: ChunkConfig) -> GeoBBox {
+    // Chunk (x,y) copre il quadrato in metri:
+    // [x*size, (x+1)*size] × [y*size, (y+1)*size] in WebMercator.
+    let x0 = id.x as f64 * cfg.chunk_size_m;
+    let x1 = (id.x as f64 + 1.0) * cfg.chunk_size_m;
+    let y0 = id.y as f64 * cfg.chunk_size_m;
+    let y1 = (id.y as f64 + 1.0) * cfg.chunk_size_m;
+
+    let lon0 = lon_deg_from_mercator_x_m(x0);
+    let lon1 = lon_deg_from_mercator_x_m(x1);
+    let lat0 = lat_deg_from_mercator_y_m(y0);
+    let lat1 = lat_deg_from_mercator_y_m(y1);
+
+    GeoBBox {
+        min_lat: lat0.min(lat1),
+        max_lat: lat0.max(lat1),
+        min_lon: lon0.min(lon1),
+        max_lon: lon0.max(lon1),
+    }
+}
+
 /// Una primitive OSM associata alla sua **bounding box geografica**.
 #[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct ChunkPrimitive<T> {
@@ -151,7 +182,11 @@ pub struct ChunkPrimitive<T> {
 /// - Chunks “tipo Minecraft”: ogni primitive è assegnata ad un chunk in base al suo (lat,lon)
 ///   proiettato in WebMercator.
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
-pub fn save_chunks<T: bincode::Encode + Clone>(spatial: &[ChunkPrimitive<T>], dir: &str, cfg: ChunkConfig) -> std::io::Result<()> {
+pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug>(
+    spatial: &[ChunkPrimitive<T>],
+    dir: &str,
+    cfg: ChunkConfig,
+) -> std::io::Result<()> {
     let root = Path::new(dir);
     fs::create_dir_all(root)?;
 
@@ -170,12 +205,16 @@ pub fn save_chunks<T: bincode::Encode + Clone>(spatial: &[ChunkPrimitive<T>], di
     buckets
         .into_iter()
         .try_for_each(|(id, prims)| -> std::io::Result<()> {
+            info!("saving chunk {:?} with {} primitives", id, prims.len());
 
+            if prims.len() < 50 {
+                return Ok(());
+            }
 
             let path = root.join(chunk_file_name(id, cfg));
             // Più veloce di tante piccole write: serializza in RAM e scrive in un colpo solo.
-            let bytes =
-                bincode::encode_to_vec(&prims, bincode::config::standard()).map_err(std::io::Error::other)?;
+            let bytes = bincode::encode_to_vec(&prims, bincode::config::standard())
+                .map_err(std::io::Error::other)?;
             fs::write(&path, bytes)?;
             Ok(())
         })?;
@@ -183,24 +222,35 @@ pub fn save_chunks<T: bincode::Encode + Clone>(spatial: &[ChunkPrimitive<T>], di
     Ok(())
 }
 
+pub struct ChunkData<T: bincode::Decode<()> + Clone> {
+    pub id: ChunkId,
+    pub data: Vec<ChunkPrimitive<T>>,
+    pub cfg: ChunkConfig,
+}
+
+impl<T: bincode::Decode<()> + Clone> ChunkData<T> {
+    pub fn bbox(&self) -> GeoBBox {
+        geo_bbox_for_chunk_id(self.id, self.cfg)
+    }
+}
+
 /// Legge automaticamente tutti i chunk che intersecano `bbox` e ritorna le primitive
 /// contenute dentro `bbox` (filtrate in lat/lon).
-pub fn load_primitives_in_bbox<T: bincode::Decode<()> + Clone>(
+pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone>(
     dir: &str,
     bbox: &GeoBBox,
     cfg: ChunkConfig,
-) -> std::io::Result<Vec<ChunkPrimitive<T>>> {
+) -> std::io::Result<Vec<ChunkData<T>>> {
     let root = Path::new(dir);
     let bbox = bbox.clone().normalized();
     let (xs, ys) = chunk_range_for_bbox(bbox.clone(), cfg);
-    let total_to_check = xs.clone().count() * ys.clone().count();
 
-    let mut out: Vec<ChunkPrimitive<T>> = Vec::new();
+    let mut out: Vec<ChunkData<T>> = Vec::new();
     //let mut seen: HashSet<(u8, i64)> = HashSet::new();
-    let mut loaded_chunks: usize = 0;
     for x in xs {
         for y in ys.clone() {
             let id = ChunkId { x, y };
+            info!("loading chunk {:?}", id);
             // Formato: c{size}_x{X}_y{Y}.bin
             let new_path = root.join(chunk_file_name(id, cfg));
             let bytes = match fs::read(&new_path) {
@@ -208,28 +258,19 @@ pub fn load_primitives_in_bbox<T: bincode::Decode<()> + Clone>(
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(e),
             };
-            loaded_chunks += 1;
 
             let prims: Vec<ChunkPrimitive<T>> =
                 bincode::decode_from_slice(&bytes, bincode::config::standard())
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
                     .0;
 
-            for p in prims {
-                if !p.bbox.intersects(&bbox) {
-                    continue;
-                }
-                //let key = p.osm_key();
-                //if seen.insert(key) {
-                    out.push(p);
-                //}
-            }
+            out.push(ChunkData {
+                id,
+                data: prims,
+                cfg,
+            });
         }
     }
 
-    log::info!(
-        "Loaded {loaded_chunks}/{total_to_check} chunks from '{dir}' for bbox={bbox:?} chunk_size_m={}",
-        cfg.chunk_size_m
-    );
     Ok(out)
 }

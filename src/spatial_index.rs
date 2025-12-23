@@ -3,10 +3,14 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{chunk_manager::GeoBBox, converter::SpatialNodeData, raw_osm_reader::{NodeData, RelationData, RelationMemberType, WayData}};
+use crate::{
+    chunk_manager::GeoBBox,
+    converter::SpatialNodeData,
+    raw_osm_reader::{NodeData, RelationData, RelationMemberType, WayData},
+};
 
 /// Primitive OSM “grezze” (non ancora convertite in MapElement).
-#[derive(Debug, Clone, Serialize, Deserialize,bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub enum OsmPrimitive {
     Node(SpatialNodeData),
     Way(WayData),
@@ -31,7 +35,6 @@ impl PositionedPrimitive {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy)]
 struct BBox {
@@ -136,16 +139,13 @@ pub fn build_spatial_index(
     ways: Vec<WayData>,
     relations: Vec<RelationData>,
 ) -> Vec<PositionedPrimitive> {
-
-    let node_pos: HashMap<i64, (f64, f64)> = nodes
-        .par_iter()
-        .map(|n| (n.id, (n.lat, n.lon)))
-        .collect();
+    let node_pos: HashMap<i64, (f64, f64)> =
+        nodes.par_iter().map(|n| (n.id, (n.lat, n.lon))).collect();
 
     println!("node index done");
 
     let mut spatial = Vec::with_capacity(nodes.len() + ways.len() + relations.len());
-    
+
     spatial.par_extend(nodes.into_par_iter().map(|n| PositionedPrimitive {
         bbox: GeoBBox {
             min_lat: n.lat,
@@ -153,9 +153,11 @@ pub fn build_spatial_index(
             min_lon: n.lon,
             max_lon: n.lon,
         },
-        primitive: OsmPrimitive::Node(SpatialNodeData { id: n.id, tags: n.tags.clone() }),
+        primitive: OsmPrimitive::Node(SpatialNodeData {
+            id: n.id,
+            tags: n.tags.clone(),
+        }),
     }));
-
 
     let ways_by_id: HashMap<i64, &WayData> = ways.par_iter().map(|w| (w.id, w)).collect();
 
@@ -165,26 +167,25 @@ pub fn build_spatial_index(
         .collect();
 
     // Ways
-    spatial.par_extend(
-        ways.into_par_iter()
-            .filter_map(|w| way_bbox(&w, &node_pos).map(|bbox| PositionedPrimitive {
-                bbox,
-                primitive: OsmPrimitive::Way(w),
-            })),
-    );
+    spatial.par_extend(ways.into_par_iter().filter_map(|w| {
+        way_bbox(&w, &node_pos).map(|bbox| PositionedPrimitive {
+            bbox,
+            primitive: OsmPrimitive::Way(w),
+        })
+    }));
 
     // Relations (multipolygon o altro): bbox via membri.
     spatial.par_extend(
         relations
             .into_par_iter()
             .zip(rel_bboxes.into_par_iter())
-            .filter_map(|(r, bbox)| bbox.map(|bbox| PositionedPrimitive {
-                bbox,
-                primitive: OsmPrimitive::Relation(r),
-            })),
+            .filter_map(|(r, bbox)| {
+                bbox.map(|bbox| PositionedPrimitive {
+                    bbox,
+                    primitive: OsmPrimitive::Relation(r),
+                })
+            }),
     );
 
     spatial
 }
-
-

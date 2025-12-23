@@ -103,6 +103,8 @@ pub enum ElementType {
         /// True se è un punto, false se è una linea
         is_punto: bool,
     },
+    /// Bordo di un chunk (debug/overlay)
+    ChunkBorder,
 }
 
 impl MapElement {
@@ -194,6 +196,7 @@ impl MapElement {
                     Rgb565::new(120 >> 3, 130 >> 2, 140 >> 3)
                 }
             }
+            ElementType::ChunkBorder => Rgb565::new(31, 0, 0),
         }
     }
 
@@ -221,6 +224,7 @@ impl MapElement {
             | ElementType::Canale => 4,
             ElementType::Albero | ElementType::PuntoInteresse { .. } => 5,
             ElementType::Altro { .. } => 1,
+            ElementType::ChunkBorder => 6,
         }
     }
 }
