@@ -1,4 +1,9 @@
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::{DrawTarget, OriginDimensions};
+use image::RgbImage;
+use log::error;
 use osmrender::chunk_manager::{ChunkConfig, GeoBBox, load_chunks_for_bbox};
+use osmrender::imageframebuffer::ImageFramebuffer;
 use osmrender::map_elements::{ElementType, MapElement};
 use osmrender::raw_osm_reader::{RawOsmData, RelationMemberType};
 use std::collections::HashSet;
@@ -32,11 +37,15 @@ fn entro_raggio(lat: f64, lon: f64, centro_lat: f64, centro_lon: f64, raggio_met
 // Le strutture NodeData e WayData sono ora in converter.rs
 
 /// Stampa gli elementi OSM solo se sono entro un raggio specificato
-fn stampa_elementi_in_raggio(
+fn stampa_elementi_in_raggio<D: DrawTarget<Color = Rgb565> + OriginDimensions>(
     centro_lat: f64,
     centro_lon: f64,
     raggio_metri: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
+    framebuffer: &mut D,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    <D as DrawTarget>::Error: std::fmt::Debug,
+{
     //let mut spatial = load_primitives_in_bbox("chunks", bbox, ChunkConfig { chunk_size_m: 10000.0 })?;
     /*
         let accumulator = read_raw_osm_file("nord-ovest-251207.osm.pbf")?;
@@ -113,13 +122,17 @@ fn stampa_elementi_in_raggio(
     println!("Tempo di conversione elementi mappa: {:?}", elapsed);
 
     // Renderizza la mappa usando gli elementi ad alto livello
-    render::renderizza_mappa(
+    let e = render::renderizza_mappa(
         &elementi_mappa,
         centro_lat,
         centro_lon,
         raggio_metri,
-        "mappa.png",
-    )?;
+        framebuffer,
+    );
+
+    if let Err(e) = e {
+        error!("Error rendering mappa: {:?}", e);
+    }
 
     let elapsed = now.elapsed();
     println!("Tempo di rendering mappa: {:?}", elapsed);
@@ -202,8 +215,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //return Ok(());
 
+    // Dimensioni dell'immagine
+    let width = 4000u32;
+    let height = 4000u32;
+
+    // Crea il framebuffer con sfondo beige chiaro per un aspetto più naturale
+    let mut buffer = vec![0u8; (width * height * 3) as usize];
+    for i in (0..buffer.len()).step_by(3) {
+        buffer[i] = 245; // R
+        buffer[i + 1] = 240; // G
+        buffer[i + 2] = 230; // B (beige chiaro)
+    }
+    let mut framebuffer = ImageFramebuffer {
+        width,
+        height,
+        buffer,
+    };
+
     // Usa la nuova funzione per stampare solo gli elementi nel raggio
-    stampa_elementi_in_raggio(centro_lat, centro_lon, raggio_metri)?;
+    stampa_elementi_in_raggio(centro_lat, centro_lon, raggio_metri, &mut framebuffer)?;
+
+    // Converti il framebuffer in RgbImage e salva
+    let img = RgbImage::from_raw(width, height, framebuffer.buffer)
+        .ok_or("Failed to create image from framebuffer")?;
+
+    let output_path = "mappa.png";
+
+    img.save(output_path)?;
+    println!("Mappa salvata in: {}", output_path);
 
     Ok(())
 }

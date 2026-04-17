@@ -1,9 +1,11 @@
 use embedded_gfx::{K3dengine, draw::draw};
+use embedded_graphics::prelude::OriginDimensions;
 use embedded_graphics_core::{
     draw_target::DrawTarget,
     pixelcolor::{Rgb565, RgbColor as _},
 };
 use image::RgbImage;
+use log::error;
 use nalgebra::Point3;
 
 use crate::map_elements::MapElement;
@@ -29,57 +31,19 @@ fn entro_raggio(lat: f64, lon: f64, centro_lat: f64, centro_lon: f64, raggio_met
     distanza_geografica(lat, lon, centro_lat, centro_lon) <= raggio_metri
 }
 
-/// Framebuffer compatibile con embedded-graphics che usa un buffer RGB888
-struct ImageFramebuffer {
-    width: u32,
-    height: u32,
-    buffer: Vec<u8>, // RGB interleaved (Rgb888)
-}
-
-impl DrawTarget for ImageFramebuffer {
-    type Color = Rgb565;
-    type Error = ();
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = embedded_graphics_core::Pixel<Self::Color>>,
-    {
-        for pixel in pixels {
-            let x = pixel.0.x as u32;
-            let y = pixel.0.y as u32;
-
-            if x < self.width && y < self.height {
-                let idx = ((y * self.width + x) * 3) as usize;
-                if idx + 2 < self.buffer.len() {
-                    let color = pixel.1;
-                    // Converti Rgb565 a Rgb888
-                    let r = (color.r() as u16 * 255 / 31) as u8;
-                    let g = (color.g() as u16 * 255 / 63) as u8;
-                    let b = (color.b() as u16 * 255 / 31) as u8;
-                    self.buffer[idx] = r;
-                    self.buffer[idx + 1] = g;
-                    self.buffer[idx + 2] = b;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl embedded_graphics_core::geometry::OriginDimensions for ImageFramebuffer {
-    fn size(&self) -> embedded_graphics_core::geometry::Size {
-        embedded_graphics_core::geometry::Size::new(self.width, self.height)
-    }
-}
-
 /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
-pub fn renderizza_mappa(
+pub fn renderizza_mappa<
+    D: DrawTarget<Color = embedded_graphics_core::pixelcolor::Rgb565> + OriginDimensions,
+>(
     elementi: &[MapElement],
     centro_lat: f64,
     centro_lon: f64,
     raggio_metri: f64,
-    output_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+    framebuffer: &mut D,
+) -> Result<(), <D as DrawTarget>::Error>
+where
+    <D as DrawTarget>::Error: std::fmt::Debug,
+{
     if elementi.is_empty() {
         println!("Nessun elemento da renderizzare");
         return Ok(());
@@ -100,10 +64,6 @@ pub fn renderizza_mappa(
     let mut min_lon = centro_lon - gradi_lon;
     let mut max_lon = centro_lon + gradi_lon;
 
-    // Dimensioni dell'immagine
-    let width = 4000u32;
-    let height = 4000u32;
-
     // Scala per mantenere le coordinate in un range che la proiezione può gestire
     let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
 
@@ -117,28 +77,18 @@ pub fn renderizza_mappa(
         max_lat,
         min_lon,
         max_lon,
-        width,
-        height,
+        width: framebuffer.size().width as u32,
+        height: framebuffer.size().height as u32,
         scale_factor,
         z_base: 0.0,     // Base z per elementi con priorità 0
         z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
     };
 
-    // Crea il framebuffer con sfondo beige chiaro per un aspetto più naturale
-    let mut buffer = vec![0u8; (width * height * 3) as usize];
-    for i in (0..buffer.len()).step_by(3) {
-        buffer[i] = 245; // R
-        buffer[i + 1] = 240; // G
-        buffer[i + 2] = 230; // B (beige chiaro)
-    }
-    let mut framebuffer = ImageFramebuffer {
-        width,
-        height,
-        buffer,
-    };
-
     // Crea l'engine 3D
-    let mut engine = K3dengine::new(width as u16, height as u16);
+    let mut engine = K3dengine::new(
+        framebuffer.size().width as u16,
+        framebuffer.size().height as u16,
+    );
 
     // Configura la camera per vedere gli oggetti a z=0
     // Dopo la trasformazione view, z diventa la distanza dalla camera
@@ -162,16 +112,13 @@ pub fn renderizza_mappa(
     let mut primitive_count = 0;
     engine.render(&meshes, |p| {
         primitive_count += 1;
-        draw(p, &mut framebuffer);
+        let e = draw(&p, framebuffer);
+
+        if let Err(e) = e {
+            error!("Error drawing primitive: {:?} {:?}", p, e);
+        }
     });
     println!("Renderizzati {} primitivi", primitive_count);
-
-    // Converti il framebuffer in RgbImage e salva
-    let img = RgbImage::from_raw(width, height, framebuffer.buffer)
-        .ok_or("Failed to create image from framebuffer")?;
-
-    img.save(output_path)?;
-    println!("Mappa salvata in: {}", output_path);
 
     Ok(())
 }
