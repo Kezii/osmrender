@@ -8,8 +8,8 @@ use image::RgbImage;
 use log::error;
 use nalgebra::Point3;
 
-use crate::map_elements::MapElement;
 use crate::rendering_adapter::{ConversionParams, converti_a_mesh};
+use crate::{chunk_manager::GeoBBox, map_elements::MapElement};
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -36,9 +36,7 @@ pub fn renderizza_mappa<
     D: DrawTarget<Color = embedded_graphics_core::pixelcolor::Rgb565> + OriginDimensions,
 >(
     elementi: &[MapElement],
-    centro_lat: f64,
-    centro_lon: f64,
-    raggio_metri: f64,
+    bbox: &GeoBBox,
     framebuffer: &mut D,
 ) -> Result<(), <D as DrawTarget>::Error>
 where
@@ -49,21 +47,6 @@ where
         return Ok(());
     }
 
-    // Aggiungi un margine per vedere meglio
-    let margine = raggio_metri * 0.1; // 10% di margine
-    let raggio_con_margine = raggio_metri + margine;
-
-    // Calcola bounds dal centro con margine
-    // Approssimazione semplice: 1 grado lat ≈ 111 km, 1 grado lon ≈ 111 km * cos(lat)
-    let gradi_lat = raggio_con_margine / 111000.0;
-    let gradi_lon = raggio_con_margine / (111000.0 * centro_lat.to_radians().cos());
-
-    // Inizializza i bounds dal centro con margine
-    let mut min_lat = centro_lat - gradi_lat;
-    let mut max_lat = centro_lat + gradi_lat;
-    let mut min_lon = centro_lon - gradi_lon;
-    let mut max_lon = centro_lon + gradi_lon;
-
     // Scala per mantenere le coordinate in un range che la proiezione può gestire
     let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
 
@@ -73,12 +56,9 @@ where
     // e le strade (priorità 3) siano sopra gli edifici
     // z_spacing più grande per garantire che gli edifici siano sempre visibili
     let params = ConversionParams {
-        min_lat,
-        max_lat,
-        min_lon,
-        max_lon,
-        width: framebuffer.size().width as u32,
-        height: framebuffer.size().height as u32,
+        bbox: bbox.clone(),
+        width: framebuffer.size().width,
+        height: framebuffer.size().height,
         scale_factor,
         z_base: 0.0,     // Base z per elementi con priorità 0
         z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)

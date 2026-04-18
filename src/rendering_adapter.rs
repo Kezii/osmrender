@@ -1,4 +1,7 @@
-use crate::map_elements::{ElementType, MapElement};
+use crate::{
+    chunk_manager::GeoBBox,
+    map_elements::{ElementType, MapElement},
+};
 use earcut::Earcut;
 use embedded_gfx::mesh::{Geometry, K3dMesh, RenderMode};
 use embedded_graphics_core::pixelcolor::Rgb565;
@@ -19,10 +22,7 @@ pub struct MeshData {
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
 pub struct ConversionParams {
     /// Bounds geografici
-    pub min_lat: f64,
-    pub max_lat: f64,
-    pub min_lon: f64,
-    pub max_lon: f64,
+    pub bbox: GeoBBox,
     /// Dimensioni dell'immagine
     pub width: u32,
     pub height: u32,
@@ -46,10 +46,7 @@ impl ConversionParams {
     ) -> Self {
         if elementi.is_empty() {
             return Self {
-                min_lat: 0.0,
-                max_lat: 0.0,
-                min_lon: 0.0,
-                max_lon: 0.0,
+                bbox: GeoBBox::default(),
                 width,
                 height,
                 scale_factor,
@@ -74,10 +71,12 @@ impl ConversionParams {
         }
 
         Self {
-            min_lat,
-            max_lat,
-            min_lon,
-            max_lon,
+            bbox: GeoBBox {
+                min_lat,
+                max_lat,
+                min_lon,
+                max_lon,
+            },
             width,
             height,
             scale_factor,
@@ -92,8 +91,10 @@ impl ConversionParams {
         let center_x = self.width as f32 / 2.0;
         let center_y = self.height as f32 / 2.0;
 
-        let x = ((lon - self.min_lon) / (self.max_lon - self.min_lon) * self.width as f64) as f32;
-        let y = ((lat - self.min_lat) / (self.max_lat - self.min_lat) * self.height as f64) as f32;
+        let x = ((lon - self.bbox.min_lon) / (self.bbox.max_lon - self.bbox.min_lon)
+            * self.width as f64) as f32;
+        let y = ((lat - self.bbox.min_lat) / (self.bbox.max_lat - self.bbox.min_lat)
+            * self.height as f64) as f32;
 
         let x_world = (x - center_x) * self.scale_factor;
         let y_world = (y - center_y) * self.scale_factor;

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 /// Bounding box geografica (lat/lon).
-#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Default, Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct GeoBBox {
     pub min_lat: f64,
     pub min_lon: f64,
