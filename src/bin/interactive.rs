@@ -11,7 +11,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::renderprocess::{CAMERA_DISTANCE, CAMERA_FOVY, MAP_SCALE_FACTOR, RenderState};
+use osmrender::renderprocess::{RenderState, viewport_geo_overscan};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -64,13 +64,8 @@ fn flick_velocity_from_history(
     ))
 }
 
-fn pan_scale_for_display(display_size: Size) -> f64 {
-    (2.0 * CAMERA_DISTANCE as f64 * (CAMERA_FOVY as f64 / 2.0).tan())
-        / (display_size.height as f64 * MAP_SCALE_FACTOR as f64)
-}
-
 fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
-    let pan_scale = pan_scale_for_display(display_size);
+    let pan_scale = viewport_geo_overscan(display_size);
     let lon_per_pixel = ((render_state.bbox.max_lon - render_state.bbox.min_lon)
         / display_size.width as f64)
         * pan_scale;
@@ -110,8 +105,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.set_bbox(centro_lat, centro_lon, raggio_metri);
-            render_state.reload_chunks()?;
+            render_state.set_bbox_for_viewport(
+                centro_lat,
+                centro_lon,
+                raggio_metri,
+                display.size(),
+            );
             render_state.reload_map_elements()?;
             render_state.reload_mesh_container(&mut display)?;
             should_reload = false;
@@ -131,6 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     raggio_metri -= (raggio_metri / 10.0) * scroll_delta.y as f64;
                     should_reload = true;
                     center_speed = None;
+                    render_state.reload_chunks()?;
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if click_down_point.is_some() {
@@ -139,6 +139,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     click_down_point = None;
                     previous_frame_point.clear();
+                    should_reload = true;
+                    render_state.reload_chunks()?;
                 }
                 SimulatorEvent::MouseButtonDown { point, .. } => {
                     click_down_point = Some(point);

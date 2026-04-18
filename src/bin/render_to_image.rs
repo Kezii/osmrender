@@ -1,3 +1,4 @@
+use embedded_graphics::prelude::OriginDimensions;
 use image::RgbImage;
 use osmrender::{imageframebuffer::ImageFramebuffer, renderprocess::RenderState};
 
@@ -31,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut render_state = RenderState::default();
-    render_state.set_bbox(centro_lat, centro_lon, raggio_metri);
+    render_state.set_bbox_for_viewport(centro_lat, centro_lon, raggio_metri, framebuffer.size());
     render_state.reload_chunks()?;
     render_state.reload_map_elements()?;
     render_state.reload_mesh_container(&mut framebuffer)?;

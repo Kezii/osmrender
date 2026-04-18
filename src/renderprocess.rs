@@ -20,6 +20,7 @@ const SHOW_CHUNK_BORDERS: bool = true;
 pub const MAP_SCALE_FACTOR: f32 = 0.0003;
 pub const CAMERA_DISTANCE: f32 = 2.0;
 pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
+const CHUNK_LOAD_OVERSCAN: f64 = 1.05;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -41,24 +42,88 @@ fn entro_raggio(lat: f64, lon: f64, centro_lat: f64, centro_lon: f64, raggio_met
     distanza_geografica(lat, lon, centro_lat, centro_lon) <= raggio_metri
 }
 
+fn bbox_for_viewport(
+    centro_lat: f64,
+    centro_lon: f64,
+    raggio_metri: f64,
+    viewport: Size,
+) -> GeoBBox {
+    let aspect_ratio = if viewport.height == 0 {
+        1.0
+    } else {
+        viewport.width as f64 / viewport.height as f64
+    };
+    let aspect_ratio = aspect_ratio.max(f64::EPSILON);
+
+    // Manteniamo `raggio_metri` come semidimensione dell'asse più corto e
+    // allarghiamo l'altro asse per adattarci al viewport senza deformare la mappa.
+    let (half_width_m, half_height_m) = if aspect_ratio >= 1.0 {
+        (raggio_metri * aspect_ratio, raggio_metri)
+    } else {
+        (raggio_metri, raggio_metri / aspect_ratio)
+    };
+
+    let lat_delta = half_height_m / 111000.0;
+    let meters_per_lon_degree = (111000.0 * centro_lat.to_radians().cos().abs()).max(1.0);
+    let lon_delta = half_width_m / meters_per_lon_degree;
+
+    GeoBBox {
+        min_lat: centro_lat - lat_delta,
+        max_lat: centro_lat + lat_delta,
+        min_lon: centro_lon - lon_delta,
+        max_lon: centro_lon + lon_delta,
+    }
+}
+
+pub fn viewport_geo_overscan(viewport: Size) -> f64 {
+    if viewport.height == 0 {
+        return 1.0;
+    }
+
+    let visible_world_height = 2.0 * CAMERA_DISTANCE as f64 * (CAMERA_FOVY as f64 / 2.0).tan();
+    let mapped_world_height = viewport.height as f64 * MAP_SCALE_FACTOR as f64;
+
+    (visible_world_height / mapped_world_height).max(1.0)
+}
+
+fn expanded_bbox_for_loading(bbox: &GeoBBox, viewport: Size) -> GeoBBox {
+    let scale = viewport_geo_overscan(viewport) * CHUNK_LOAD_OVERSCAN;
+    let center_lat = (bbox.min_lat + bbox.max_lat) * 0.5;
+    let center_lon = (bbox.min_lon + bbox.max_lon) * 0.5;
+    let half_lat_span = (bbox.max_lat - bbox.min_lat) * 0.5 * scale;
+    let half_lon_span = (bbox.max_lon - bbox.min_lon) * 0.5 * scale;
+
+    GeoBBox {
+        min_lat: center_lat - half_lat_span,
+        max_lat: center_lat + half_lat_span,
+        min_lon: center_lon - half_lon_span,
+        max_lon: center_lon + half_lon_span,
+    }
+}
+
 #[derive(Default)]
 pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
     pub map_elements: Vec<MapElement>,
     pub mesh_container: Vec<OwnedMeshData>,
     pub bbox: GeoBBox,
+    pub load_bbox: GeoBBox,
 }
 
 impl RenderState {
     pub fn set_bbox(&mut self, centro_lat: f64, centro_lon: f64, raggio_metri: f64) {
-        let bbox = GeoBBox {
-            min_lat: centro_lat - raggio_metri / 111000.0,
-            max_lat: centro_lat + raggio_metri / 111000.0,
-            min_lon: centro_lon - raggio_metri / (111000.0 * centro_lat.to_radians().cos()),
-            max_lon: centro_lon + raggio_metri / (111000.0 * centro_lat.to_radians().cos()),
-        };
+        self.set_bbox_for_viewport(centro_lat, centro_lon, raggio_metri, Size::new(1, 1));
+    }
 
-        self.bbox = bbox;
+    pub fn set_bbox_for_viewport(
+        &mut self,
+        centro_lat: f64,
+        centro_lon: f64,
+        raggio_metri: f64,
+        viewport: Size,
+    ) {
+        self.bbox = bbox_for_viewport(centro_lat, centro_lon, raggio_metri, viewport);
+        self.load_bbox = expanded_bbox_for_loading(&self.bbox, viewport);
     }
 
     pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -68,7 +133,7 @@ impl RenderState {
 
         let now = Instant::now();
 
-        let chunks = load_chunks_for_bbox::<MapElement>("chunks", &self.bbox, cfg)?;
+        let chunks = load_chunks_for_bbox::<MapElement>("chunks", &self.load_bbox, cfg)?;
 
         let elapsed = now.elapsed();
         println!("Tempo di caricamento chunk: {:?}", elapsed);
@@ -204,6 +269,52 @@ pub fn filtra_map_elements(elementi_mappa: Vec<MapElement>, bbox: &GeoBBox) -> V
         .filter(|e| bbox.intersects(&e.bbox()))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bbox_size_in_meters(bbox: &GeoBBox, center_lat: f64) -> (f64, f64) {
+        let height_m = (bbox.max_lat - bbox.min_lat) * 111000.0;
+        let width_m =
+            (bbox.max_lon - bbox.min_lon) * 111000.0 * center_lat.to_radians().cos().abs();
+        (width_m, height_m)
+    }
+
+    #[test]
+    fn viewport_wide_expands_horizontal_span() {
+        let center_lat = 45.47362;
+        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, Size::new(1920, 1080));
+        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
+
+        assert!(width_m > height_m);
+        assert!((width_m / height_m - (1920.0 / 1080.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn viewport_tall_expands_vertical_span() {
+        let center_lat = 45.47362;
+        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, Size::new(1080, 1920));
+        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
+
+        assert!(height_m > width_m);
+        assert!((width_m / height_m - (1080.0 / 1920.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn loading_bbox_expands_to_camera_visible_area() {
+        let center_lat = 45.47362;
+        let viewport = Size::new(1920, 1080);
+        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, viewport);
+        let load_bbox = expanded_bbox_for_loading(&bbox, viewport);
+        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
+        let (load_width_m, load_height_m) = bbox_size_in_meters(&load_bbox, center_lat);
+
+        assert!(load_width_m > width_m);
+        assert!(load_height_m > height_m);
+        assert!(load_height_m / height_m >= viewport_geo_overscan(viewport));
+    }
 }
 
 pub fn filtra_raw_osm_data(
