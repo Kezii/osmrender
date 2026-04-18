@@ -183,7 +183,7 @@ pub struct ChunkPrimitive<T> {
 ///   proiettato in WebMercator.
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
 pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug>(
-    spatial: &[ChunkPrimitive<T>],
+    spatial: impl IntoIterator<Item = ChunkPrimitive<T>>,
     dir: &str,
     cfg: ChunkConfig,
 ) -> std::io::Result<()> {

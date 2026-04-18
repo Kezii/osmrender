@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = "nord-ovest-251207.osm.pbf";
     let out_dir = "chunks";
     let cfg = ChunkConfig {
-        chunk_size_m: 20000.0,
+        chunk_size_m: 2000.0,
     };
 
     println!("Input: {}", input);
@@ -33,14 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //println!("Primitive posizionate: {}", spatial.len());
 
     println!("--- Salvataggio chunk ---");
-    let spatial = elementi_mappa
-        .iter()
-        .map(|e| ChunkPrimitive {
-            bbox: e.bbox(),
-            primitive: e.clone(),
-        })
-        .collect::<Vec<_>>();
-    save_chunks::<MapElement>(&spatial, out_dir, cfg)?;
+    let spatial = elementi_mappa.iter().map(|e| ChunkPrimitive {
+        bbox: e.bbox(),
+        primitive: e.clone(),
+    });
+    save_chunks::<MapElement>(spatial, out_dir, cfg)?;
     println!("Done.");
 
     Ok(())

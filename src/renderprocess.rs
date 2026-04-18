@@ -17,6 +17,9 @@ use std::time::Instant;
 
 /// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
 const SHOW_CHUNK_BORDERS: bool = true;
+pub const MAP_SCALE_FACTOR: f32 = 0.0003;
+pub const CAMERA_DISTANCE: f32 = 2.0;
+pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -60,7 +63,7 @@ impl RenderState {
 
     pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let cfg = ChunkConfig {
-            chunk_size_m: 20000.0,
+            chunk_size_m: 2000.0,
         };
 
         let now = Instant::now();
@@ -118,9 +121,6 @@ impl RenderState {
         &mut self,
         framebuffer: &mut D,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Scala per mantenere le coordinate in un range che la proiezione può gestire
-        let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
-
         // Crea i parametri di conversione
         // Usiamo z diversi per priorità: priorità più alta = z più alto (più vicino alla camera)
         // Questo assicura che gli edifici (priorità 2) siano sopra le aree (priorità 0-1)
@@ -130,10 +130,10 @@ impl RenderState {
             bbox: self.bbox.clone(),
             width: framebuffer.size().width,
             height: framebuffer.size().height,
-            scale_factor,
+            scale_factor: MAP_SCALE_FACTOR,
             z_base: 0.0,     // Base z per elementi con priorità 0
             z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
-            force_wireframe: true,
+            force_wireframe: false,
         };
 
         let mesh_container = converti_a_mesh(&self.map_elements, params);
@@ -166,10 +166,12 @@ impl RenderState {
 
         // Posiziona la camera più vicina per zoomare sulla mappa
         // Distanza più piccola = zoom maggiore
-        engine.camera.set_position(Point3::new(0.0, 0.0, 2.0));
+        engine
+            .camera
+            .set_position(Point3::new(0.0, 0.0, CAMERA_DISTANCE));
         engine.camera.set_target(Point3::new(0.0, 0.0, 0.0));
         // FOV più stretto per zoomare di più (30 gradi invece di 90)
-        engine.camera.set_fovy(std::f32::consts::PI / 6.0);
+        engine.camera.set_fovy(CAMERA_FOVY);
 
         // Usa rendering_adapter per creare le mesh
 
