@@ -2,15 +2,18 @@ use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox
 use crate::imageframebuffer::ImageFramebuffer;
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
+use crate::rendering_adapter::{ConversionParams, OwnedMeshData, converti_a_mesh};
+use embedded_gfx::K3dengine;
+use embedded_gfx::draw::draw;
+use embedded_gfx::mesh::K3dMesh;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Size};
 use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, Window};
 use image::RgbImage;
-use log::error;
+use log::{error, info};
+use nalgebra::Point3;
 use std::collections::HashSet;
 use std::time::Instant;
-
-use crate::render;
 
 /// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
 const SHOW_CHUNK_BORDERS: bool = true;
@@ -38,6 +41,8 @@ fn entro_raggio(lat: f64, lon: f64, centro_lat: f64, centro_lon: f64, raggio_met
 #[derive(Default)]
 pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
+    pub map_elements: Vec<MapElement>,
+    pub mesh_container: Vec<OwnedMeshData>,
     pub bbox: GeoBBox,
 }
 
@@ -66,19 +71,12 @@ impl RenderState {
         println!("Tempo di caricamento chunk: {:?}", elapsed);
 
         self.chunks = chunks;
+
         Ok(())
     }
 
-    /// Stampa gli elementi OSM solo se sono entro un raggio specificato
-    pub fn stampa_elementi_in_raggio<D: DrawTarget<Color = Rgb565> + OriginDimensions>(
-        &mut self,
-        framebuffer: &mut D,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        <D as DrawTarget>::Error: std::fmt::Debug,
-    {
+    pub fn reload_map_elements(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let now = Instant::now();
-
         let chunk_bboxes = self.chunks.iter().map(|c| c.bbox()).collect::<Vec<_>>();
         let elementi_mappa = self
             .chunks
@@ -112,16 +110,88 @@ impl RenderState {
         let elapsed = now.elapsed();
         println!("Tempo di conversione elementi mappa: {:?}", elapsed);
 
-        let now = Instant::now();
-        // Renderizza la mappa usando gli elementi ad alto livello
-        let e = render::renderizza_mappa(&elementi_mappa, &self.bbox, framebuffer);
+        self.map_elements = elementi_mappa;
+        Ok(())
+    }
 
-        if let Err(e) = e {
-            error!("Error rendering mappa: {:?}", e);
-        }
+    pub fn reload_mesh_container<D: DrawTarget<Color = Rgb565> + OriginDimensions>(
+        &mut self,
+        framebuffer: &mut D,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Scala per mantenere le coordinate in un range che la proiezione può gestire
+        let scale_factor = 0.0003; // Scala più grande per ingrandire la mappa
 
-        let elapsed = now.elapsed();
-        println!("Tempo di rendering mappa: {:?}", elapsed);
+        // Crea i parametri di conversione
+        // Usiamo z diversi per priorità: priorità più alta = z più alto (più vicino alla camera)
+        // Questo assicura che gli edifici (priorità 2) siano sopra le aree (priorità 0-1)
+        // e le strade (priorità 3) siano sopra gli edifici
+        // z_spacing più grande per garantire che gli edifici siano sempre visibili
+        let params = ConversionParams {
+            bbox: self.bbox.clone(),
+            width: framebuffer.size().width,
+            height: framebuffer.size().height,
+            scale_factor,
+            z_base: 0.0,     // Base z per elementi con priorità 0
+            z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
+            force_wireframe: true,
+        };
+
+        let mesh_container = converti_a_mesh(&self.map_elements, params);
+
+        self.mesh_container = mesh_container;
+        Ok(())
+    }
+
+    /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
+    pub fn renderizza_mappa<
+        D: DrawTarget<Color = embedded_graphics_core::pixelcolor::Rgb565> + OriginDimensions,
+    >(
+        &self,
+        framebuffer: &mut D,
+    ) -> Result<(), <D as DrawTarget>::Error>
+    where
+        <D as DrawTarget>::Error: std::fmt::Debug,
+    {
+        // Crea l'engine 3D
+        let mut engine = K3dengine::new(
+            framebuffer.size().width as u16,
+            framebuffer.size().height as u16,
+        );
+
+        // Configura la camera per vedere gli oggetti a z=0
+        // Dopo la trasformazione view, z diventa la distanza dalla camera
+        // Se camera è a z=-5 e oggetti a z=0, dopo view gli oggetti sono a z=5
+        engine.camera.near = 0.1;
+        engine.camera.far = 100.0;
+
+        // Posiziona la camera più vicina per zoomare sulla mappa
+        // Distanza più piccola = zoom maggiore
+        engine.camera.set_position(Point3::new(0.0, 0.0, 2.0));
+        engine.camera.set_target(Point3::new(0.0, 0.0, 0.0));
+        // FOV più stretto per zoomare di più (30 gradi invece di 90)
+        engine.camera.set_fovy(std::f32::consts::PI / 6.0);
+
+        // Usa rendering_adapter per creare le mesh
+
+        // Renderizza tutte le mesh
+        // L'API si aspetta IntoIterator<Item = &K3dMesh>, quindi passiamo &meshes
+        let mut primitive_count = 0;
+
+        let meshes = self
+            .mesh_container
+            .iter()
+            .map(|mesh_data_item| mesh_data_item.to_kmesh());
+
+        engine.render(meshes, |p| {
+            primitive_count += 1;
+            let e = draw(&p, framebuffer);
+
+            if let Err(e) = e {
+                error!("Error drawing primitive: {:?} {:?}", p, e);
+            }
+        });
+        info!("Renderizzati {} primitivi", primitive_count);
+
         Ok(())
     }
 }

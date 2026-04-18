@@ -32,6 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     render_state.set_bbox(centro_lat, centro_lon, raggio_metri);
     render_state.reload_chunks()?;
+    render_state.reload_map_elements()?;
+    render_state.reload_mesh_container(&mut display)?;
 
     let mut old_frame = Instant::now();
     'running: loop {
@@ -58,6 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         display.clear(Rgb565::BLACK);
 
+        render_state.renderizza_mappa(&mut display)?;
+
         Text::new(
             &format!(
                 "Frame time: {}ms, fps: {}",
@@ -68,8 +72,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             text_style,
         )
         .draw(&mut display)?;
-
-        render_state.stampa_elementi_in_raggio(&mut display)?;
     }
 
     Ok(())

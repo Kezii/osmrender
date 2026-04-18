@@ -9,7 +9,7 @@ use log::debug;
 
 /// Struttura che mantiene tutti i dati delle mesh per garantire che i riferimenti siano validi
 /// Necessaria perché K3dMesh usa riferimenti ai dati
-pub struct MeshData {
+pub struct OwnedMeshData {
     /// Dati della geometria (mantenuti qui per i lifetime)
     pub vertices: Vec<[f32; 3]>,
     pub lines: Vec<[usize; 2]>,
@@ -17,6 +17,21 @@ pub struct MeshData {
     pub normals: Vec<[f32; 3]>,
     pub color: Rgb565,
     pub render_mode: RenderMode,
+}
+
+impl OwnedMeshData {
+    pub fn to_kmesh(&'_ self) -> K3dMesh<'_> {
+        let mut mesh = K3dMesh::new(Geometry {
+            vertices: &self.vertices,
+            faces: &self.faces,
+            colors: &[],
+            lines: &self.lines,
+            normals: &self.normals,
+        });
+        mesh.set_color(self.color);
+        mesh.set_render_mode(self.render_mode.clone());
+        mesh
+    }
 }
 
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
@@ -32,59 +47,11 @@ pub struct ConversionParams {
     pub z_base: f32,
     /// Spaziatura tra i livelli di priorità in Z
     pub z_spacing: f32,
+
+    pub force_wireframe: bool,
 }
 
 impl ConversionParams {
-    /// Crea i parametri di conversione calcolando i bounds dagli elementi
-    pub fn from_elements(
-        elementi: &[MapElement],
-        width: u32,
-        height: u32,
-        scale_factor: f32,
-        z_base: f32,
-        z_spacing: f32,
-    ) -> Self {
-        if elementi.is_empty() {
-            return Self {
-                bbox: GeoBBox::default(),
-                width,
-                height,
-                scale_factor,
-                z_base,
-                z_spacing,
-            };
-        }
-
-        let mut min_lat = f64::INFINITY;
-        let mut max_lat = f64::NEG_INFINITY;
-        let mut min_lon = f64::INFINITY;
-        let mut max_lon = f64::NEG_INFINITY;
-
-        for elemento in elementi {
-            let coordinate = elemento.coordinate();
-            for (lat, lon) in coordinate {
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-            }
-        }
-
-        Self {
-            bbox: GeoBBox {
-                min_lat,
-                max_lat,
-                min_lon,
-                max_lon,
-            },
-            width,
-            height,
-            scale_factor,
-            z_base,
-            z_spacing,
-        }
-    }
-
     /// Converte coordinate geografiche a coordinate 3D world space
     /// priority: priorità di rendering (0 = più bassa, sotto tutto)
     fn to_3d(&self, lat: f64, lon: f64, priority: u8) -> [f32; 3] {
@@ -375,44 +342,11 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     faces
 }
 
-/// Container che mantiene i dati delle mesh per garantire che i riferimenti siano validi
-pub struct MeshContainer {
-    mesh_data: Vec<MeshData>,
-}
-
-impl MeshContainer {
-    /// Crea un nuovo container con i dati delle mesh
-    pub fn new(mesh_data: Vec<MeshData>) -> Self {
-        Self { mesh_data }
-    }
-
-    /// Restituisce un array di mesh pronte per il rendering
-    /// I riferimenti sono validi finché il container esiste
-    pub fn get_meshes(&self) -> Vec<K3dMesh<'_>> {
-        self.mesh_data
-            .iter()
-            .map(|mesh_data_item| {
-                let mut mesh = K3dMesh::new(Geometry {
-                    vertices: &mesh_data_item.vertices,
-                    faces: &mesh_data_item.faces,
-                    colors: &[],
-                    lines: &mesh_data_item.lines,
-                    normals: &mesh_data_item.normals,
-                });
-                mesh.set_color(mesh_data_item.color);
-                // Copia manualmente RenderMode (non implementa Clone)
-                mesh.set_render_mode(mesh_data_item.render_mode.clone());
-                mesh
-            })
-            .collect()
-    }
-}
-
 /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
 /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
-pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> MeshContainer {
+pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec<OwnedMeshData> {
     if elementi.is_empty() {
-        return MeshContainer::new(Vec::new());
+        return Vec::new();
     }
 
     let pixel_to_world = params.scale_factor;
@@ -582,11 +516,11 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Mes
 
     // Converti ElementData in MeshData e ordina per priorità
     // Priorità più bassa = renderizzata prima (sotto), priorità più alta = renderizzata dopo (sopra)
-    let mut mesh_data_vec: Vec<(MeshData, u8, i64)> = element_data_vec
+    let mut mesh_data_vec: Vec<(OwnedMeshData, u8, i64)> = element_data_vec
         .into_iter()
         .map(|e| {
             let has_faces = !e.faces.is_empty();
-            let mesh_data = MeshData {
+            let mesh_data = OwnedMeshData {
                 vertices: e.vertices,
                 // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
                 // Per altri, mostra le linee normali
@@ -599,7 +533,7 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Mes
                 normals: e.normals,
                 color: e.color,
                 // Usa Solid per poligoni solidi con triangoli, Lines per il resto
-                render_mode: if e.is_solid && has_faces {
+                render_mode: if e.is_solid && has_faces && !params.force_wireframe {
                     RenderMode::Solid
                 } else {
                     RenderMode::Lines
@@ -613,11 +547,11 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Mes
     mesh_data_vec.sort_by_key(|(_, priority, id)| (*priority, *id));
 
     // Estrai solo i MeshData (ora ordinati)
-    let mesh_data_vec: Vec<MeshData> = mesh_data_vec
+    let mesh_data_vec: Vec<OwnedMeshData> = mesh_data_vec
         .into_iter()
         .map(|(mesh_data, _, _)| mesh_data)
         .collect();
 
     // Crea il container con i dati delle mesh
-    MeshContainer::new(mesh_data_vec)
+    mesh_data_vec
 }
