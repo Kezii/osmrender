@@ -13,7 +13,10 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::renderprocess::{RenderState, viewport_geo_overscan};
+use osmrender::{
+    WorldPos,
+    renderprocess::{RenderState, viewport_geo_overscan},
+};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -86,8 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stackframebuffer = StackFramebuffer::<1920, 1080, Rgb565>::new(Rgb565::BLACK);
 
-    let mut centro_lat = 45.47362;
-    let mut centro_lon = 9.24919;
+    let mut centro = WorldPos::new(45.47362, 9.24919);
     let mut raggio_metri = 200.0;
     let mut should_reload = true;
 
@@ -109,12 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.set_bbox_for_viewport(
-                centro_lat,
-                centro_lon,
-                raggio_metri,
-                display.size(),
-            );
+            render_state.set_bbox_for_viewport(centro, raggio_metri, display.size());
             render_state.reload_chunks()?;
             render_state.reload_map_elements()?;
             render_state.reload_mesh_container(&mut display)?;
@@ -161,8 +158,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Durante il pan il punto sotto al cursore deve restare lo stesso,
                         // quindi il centro si muove in senso opposto al delta del mouse.
                         // Il fattore di pan include la porzione realmente visibile tramite camera.
-                        centro_lat += delta.y as f64 * lat_per_pixel;
-                        centro_lon -= delta.x as f64 * lon_per_pixel;
+                        centro += WorldPos::new(
+                            delta.y as f64 * lat_per_pixel,
+                            -delta.x as f64 * lon_per_pixel,
+                        );
                         click_down_point = Some(point);
                         should_reload = true;
                         center_speed = None;
@@ -177,8 +176,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let display_size = display.size();
             let (lat_per_pixel, lon_per_pixel) = geo_delta_per_pixel(&render_state, display_size);
 
-            centro_lat += current_speed.y * lat_per_pixel;
-            centro_lon -= current_speed.x * lon_per_pixel;
+            centro += WorldPos::new(
+                current_speed.y * lat_per_pixel,
+                -current_speed.x * lon_per_pixel,
+            );
 
             should_reload = true;
             info!("inertia {:?}", current_speed);

@@ -1,4 +1,5 @@
 use crate::{
+    WorldPos,
     chunk_manager::GeoBBox,
     map_elements::{ElementType, MapElement},
 };
@@ -32,6 +33,27 @@ impl OwnedMeshData {
         mesh.set_render_mode(self.render_mode.clone());
         mesh
     }
+
+    pub fn get_bbox(&self) -> GeoBBox {
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+
+        for vertex in &self.vertices {
+            min_x = min_x.min(vertex[0]);
+            min_y = min_y.min(vertex[1]);
+            max_x = max_x.max(vertex[0]);
+            max_y = max_y.max(vertex[1]);
+        }
+
+        GeoBBox {
+            min_lat: min_y as f64,
+            max_lat: max_y as f64,
+            min_lon: min_x as f64,
+            max_lon: max_x as f64,
+        }
+    }
 }
 
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
@@ -54,13 +76,13 @@ pub struct ConversionParams {
 impl ConversionParams {
     /// Converte coordinate geografiche a coordinate 3D world space
     /// priority: priorità di rendering (0 = più bassa, sotto tutto)
-    fn to_3d(&self, lat: f64, lon: f64, priority: u8) -> [f32; 3] {
+    fn to_3d(&self, pos: &WorldPos, priority: u8) -> [f32; 3] {
         let center_x = self.width as f32 / 2.0;
         let center_y = self.height as f32 / 2.0;
 
-        let x = ((lon - self.bbox.min_lon) / (self.bbox.max_lon - self.bbox.min_lon)
+        let x = ((pos.lon() - self.bbox.min_lon) / (self.bbox.max_lon - self.bbox.min_lon)
             * self.width as f64) as f32;
-        let y = ((lat - self.bbox.min_lat) / (self.bbox.max_lat - self.bbox.min_lat)
+        let y = ((pos.lat() - self.bbox.min_lat) / (self.bbox.max_lat - self.bbox.min_lat)
             * self.height as f64) as f32;
 
         let x_world = (x - center_x) * self.scale_factor;
@@ -373,8 +395,8 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
 
         // Gestisci punti (alberi, punti interesse)
         if elemento.is_punto() {
-            if let Some((lat, lon)) = coordinate.first() {
-                let [x, y, z] = params.to_3d(*lat, *lon, priority);
+            if let Some(pos) = coordinate.first() {
+                let [x, y, z] = params.to_3d(pos, priority);
                 let (radius_pixels, n_points) = match elemento.element_type {
                     ElementType::Albero => (8.0, 12),
                     ElementType::PuntoInteresse { .. } => (3.0, 12),
@@ -412,9 +434,9 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
             }
 
             let mut vertices = Vec::new();
-            for (lat, lon) in &coordinate {
+            for pos in &coordinate {
                 // Ogni vertice ha Z basato sulla priorità
-                let vertex = params.to_3d(*lat, *lon, priority);
+                let vertex = params.to_3d(pos, priority);
                 vertices.push(vertex);
             }
 
@@ -445,7 +467,7 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
                     .map(|inner_ring| {
                         inner_ring
                             .iter()
-                            .map(|(lat, lon)| params.to_3d(*lat, *lon, priority))
+                            .map(|pos| params.to_3d(pos, priority))
                             .collect()
                     })
                     .collect();

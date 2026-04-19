@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use osmpbf::{Element, ElementReader};
 use serde::{Deserialize, Serialize};
 
+use crate::WorldPos;
+
 /// Dati di un nodo OSM
-#[derive(Clone, Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, bincode::Encode, bincode::Decode)]
 pub struct NodeData {
     pub id: i64,
-    pub lat: f64,
-    pub lon: f64,
+    pub pos: WorldPos,
     pub tags: Vec<(String, String)>,
 }
 
@@ -66,8 +67,7 @@ pub fn read_raw_osm_file(path: &str) -> Result<RawOsmData, Box<dyn std::error::E
                     RawOsmData {
                         nodes: vec![NodeData {
                             id: node.id(),
-                            lat: node.lat(),
-                            lon: node.lon(),
+                            pos: WorldPos::new(node.lat(), node.lon()),
                             tags,
                         }],
                         ways: Vec::new(),
@@ -82,8 +82,7 @@ pub fn read_raw_osm_file(path: &str) -> Result<RawOsmData, Box<dyn std::error::E
                     RawOsmData {
                         nodes: vec![NodeData {
                             id: node.id(),
-                            lat: node.lat(),
-                            lon: node.lon(),
+                            pos: WorldPos::new(node.lat(), node.lon()),
                             tags,
                         }],
                         ways: Vec::new(),

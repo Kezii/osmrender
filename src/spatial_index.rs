@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    WorldPos,
     chunk_manager::GeoBBox,
     converter::SpatialNodeData,
     raw_osm_reader::{NodeData, RelationData, RelationMemberType, WayData},
@@ -56,14 +57,14 @@ impl BBox {
         }
     }
 
-    fn add(&mut self, lat: f64, lon: f64) {
-        if !lat.is_finite() || !lon.is_finite() {
+    fn add(&mut self, pos: WorldPos) {
+        if !pos.lat().is_finite() || !pos.lon().is_finite() {
             return;
         }
-        self.min_lat = self.min_lat.min(lat);
-        self.max_lat = self.max_lat.max(lat);
-        self.min_lon = self.min_lon.min(lon);
-        self.max_lon = self.max_lon.max(lon);
+        self.min_lat = self.min_lat.min(pos.lat());
+        self.max_lat = self.max_lat.max(pos.lat());
+        self.min_lon = self.min_lon.min(pos.lon());
+        self.max_lon = self.max_lon.max(pos.lon());
         self.count += 1;
     }
 
@@ -88,11 +89,11 @@ impl BBox {
     }
 }
 
-fn way_bbox(way: &WayData, node_pos: &HashMap<i64, (f64, f64)>) -> Option<GeoBBox> {
+fn way_bbox(way: &WayData, node_pos: &HashMap<i64, WorldPos>) -> Option<GeoBBox> {
     let mut bbox = BBox::new();
     for node_id in &way.node_refs {
-        if let Some(&(lat, lon)) = node_pos.get(node_id) {
-            bbox.add(lat, lon);
+        if let Some(&pos) = node_pos.get(node_id) {
+            bbox.add(pos);
         }
     }
     bbox.into_geo_bbox()
@@ -101,7 +102,7 @@ fn way_bbox(way: &WayData, node_pos: &HashMap<i64, (f64, f64)>) -> Option<GeoBBo
 fn relation_bbox(
     rel: &RelationData,
     ways_by_id: &HashMap<i64, &WayData>,
-    node_pos: &HashMap<i64, (f64, f64)>,
+    node_pos: &HashMap<i64, WorldPos>,
 ) -> Option<GeoBBox> {
     let mut bbox = BBox::new();
 
@@ -110,15 +111,15 @@ fn relation_bbox(
             RelationMemberType::Way => {
                 if let Some(way) = ways_by_id.get(&m.member_id) {
                     for node_id in &way.node_refs {
-                        if let Some(&(lat, lon)) = node_pos.get(node_id) {
-                            bbox.add(lat, lon);
+                        if let Some(&pos) = node_pos.get(node_id) {
+                            bbox.add(pos);
                         }
                     }
                 }
             }
             RelationMemberType::Node => {
-                if let Some(&(lat, lon)) = node_pos.get(&m.member_id) {
-                    bbox.add(lat, lon);
+                if let Some(&pos) = node_pos.get(&m.member_id) {
+                    bbox.add(pos);
                 }
             }
             RelationMemberType::Relation => {
@@ -139,8 +140,7 @@ pub fn build_spatial_index(
     ways: Vec<WayData>,
     relations: Vec<RelationData>,
 ) -> Vec<PositionedPrimitive> {
-    let node_pos: HashMap<i64, (f64, f64)> =
-        nodes.par_iter().map(|n| (n.id, (n.lat, n.lon))).collect();
+    let node_pos: HashMap<i64, WorldPos> = nodes.par_iter().map(|n| (n.id, n.pos)).collect();
 
     println!("node index done");
 
@@ -148,10 +148,10 @@ pub fn build_spatial_index(
 
     spatial.par_extend(nodes.into_par_iter().map(|n| PositionedPrimitive {
         bbox: GeoBBox {
-            min_lat: n.lat,
-            max_lat: n.lat,
-            min_lon: n.lon,
-            max_lon: n.lon,
+            min_lat: n.pos.lat(),
+            max_lat: n.pos.lat(),
+            min_lon: n.pos.lon(),
+            max_lon: n.pos.lon(),
         },
         primitive: OsmPrimitive::Node(SpatialNodeData {
             id: n.id,

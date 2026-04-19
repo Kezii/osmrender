@@ -1,3 +1,4 @@
+use crate::WorldPos;
 use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox};
 use crate::imageframebuffer::ImageFramebuffer;
 use crate::map_elements::{ElementType, MapElement};
@@ -24,14 +25,16 @@ pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
 const CHUNK_LOAD_OVERSCAN: f64 = 1.05;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
-fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+fn distanza_geografica(point1: WorldPos, point2: WorldPos) -> f64 {
     const R: f64 = 6371000.0; // Raggio della Terra in metri
 
-    let d_lat = (lat2 - lat1).to_radians();
-    let d_lon = (lon2 - lon1).to_radians();
+    let d_lat = (point2.lat() - point1.lat()).to_radians();
+    let d_lon = (point2.lon() - point1.lon()).to_radians();
 
     let a = (d_lat / 2.0).sin().powi(2)
-        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
+        + point1.lat().to_radians().cos()
+            * point2.lat().to_radians().cos()
+            * (d_lon / 2.0).sin().powi(2);
 
     let c = 2.0 * a.sqrt().asin();
 
@@ -39,16 +42,11 @@ fn distanza_geografica(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 }
 
 /// Verifica se un punto è entro un raggio specificato da un punto centrale
-fn entro_raggio(lat: f64, lon: f64, centro_lat: f64, centro_lon: f64, raggio_metri: f64) -> bool {
-    distanza_geografica(lat, lon, centro_lat, centro_lon) <= raggio_metri
+fn entro_raggio(pos: WorldPos, centro: WorldPos, raggio_metri: f64) -> bool {
+    distanza_geografica(pos, centro) <= raggio_metri
 }
 
-fn bbox_for_viewport(
-    centro_lat: f64,
-    centro_lon: f64,
-    raggio_metri: f64,
-    viewport: Size,
-) -> GeoBBox {
+fn bbox_for_viewport(centro: WorldPos, raggio_metri: f64, viewport: Size) -> GeoBBox {
     let aspect_ratio = if viewport.height == 0 {
         1.0
     } else {
@@ -65,14 +63,14 @@ fn bbox_for_viewport(
     };
 
     let lat_delta = half_height_m / 111000.0;
-    let meters_per_lon_degree = (111000.0 * centro_lat.to_radians().cos().abs()).max(1.0);
+    let meters_per_lon_degree = (111000.0 * centro.lat().to_radians().cos().abs()).max(1.0);
     let lon_delta = half_width_m / meters_per_lon_degree;
 
     GeoBBox {
-        min_lat: centro_lat - lat_delta,
-        max_lat: centro_lat + lat_delta,
-        min_lon: centro_lon - lon_delta,
-        max_lon: centro_lon + lon_delta,
+        min_lat: centro.lat() - lat_delta,
+        max_lat: centro.lat() + lat_delta,
+        min_lon: centro.lon() - lon_delta,
+        max_lon: centro.lon() + lon_delta,
     }
 }
 
@@ -112,18 +110,12 @@ pub struct RenderState {
 }
 
 impl RenderState {
-    pub fn set_bbox(&mut self, centro_lat: f64, centro_lon: f64, raggio_metri: f64) {
-        self.set_bbox_for_viewport(centro_lat, centro_lon, raggio_metri, Size::new(1, 1));
+    pub fn set_bbox(&mut self, centro: WorldPos, raggio_metri: f64) {
+        self.set_bbox_for_viewport(centro, raggio_metri, Size::new(1, 1));
     }
 
-    pub fn set_bbox_for_viewport(
-        &mut self,
-        centro_lat: f64,
-        centro_lon: f64,
-        raggio_metri: f64,
-        viewport: Size,
-    ) {
-        self.bbox = bbox_for_viewport(centro_lat, centro_lon, raggio_metri, viewport);
+    pub fn set_bbox_for_viewport(&mut self, centro: WorldPos, raggio_metri: f64, viewport: Size) {
+        self.bbox = bbox_for_viewport(centro, raggio_metri, viewport);
         self.load_bbox = expanded_bbox_for_loading(&self.bbox, viewport);
     }
 
@@ -161,11 +153,11 @@ impl RenderState {
         if SHOW_CHUNK_BORDERS {
             for (i, cb) in chunk_bboxes.into_iter().enumerate() {
                 let verts = vec![
-                    (cb.min_lat, cb.min_lon),
-                    (cb.min_lat, cb.max_lon),
-                    (cb.max_lat, cb.max_lon),
-                    (cb.max_lat, cb.min_lon),
-                    (cb.min_lat, cb.min_lon),
+                    WorldPos::new(cb.min_lat, cb.min_lon),
+                    WorldPos::new(cb.min_lat, cb.max_lon),
+                    WorldPos::new(cb.max_lat, cb.max_lon),
+                    WorldPos::new(cb.max_lat, cb.min_lon),
+                    WorldPos::new(cb.min_lat, cb.min_lon),
                 ];
                 elementi_mappa.push(MapElement {
                     id: -1 - (i as i64),
@@ -278,7 +270,11 @@ mod tests {
     #[test]
     fn viewport_wide_expands_horizontal_span() {
         let center_lat = 45.47362;
-        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, Size::new(1920, 1080));
+        let bbox = bbox_for_viewport(
+            WorldPos::new(center_lat, 9.24919),
+            200.0,
+            Size::new(1920, 1080),
+        );
         let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
 
         assert!(width_m > height_m);
@@ -288,7 +284,11 @@ mod tests {
     #[test]
     fn viewport_tall_expands_vertical_span() {
         let center_lat = 45.47362;
-        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, Size::new(1080, 1920));
+        let bbox = bbox_for_viewport(
+            WorldPos::new(center_lat, 9.24919),
+            200.0,
+            Size::new(1080, 1920),
+        );
         let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
 
         assert!(height_m > width_m);
@@ -299,7 +299,7 @@ mod tests {
     fn loading_bbox_expands_to_camera_visible_area() {
         let center_lat = 45.47362;
         let viewport = Size::new(1920, 1080);
-        let bbox = bbox_for_viewport(center_lat, 9.24919, 200.0, viewport);
+        let bbox = bbox_for_viewport(WorldPos::new(center_lat, 9.24919), 200.0, viewport);
         let load_bbox = expanded_bbox_for_loading(&bbox, viewport);
         let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
         let (load_width_m, load_height_m) = bbox_size_in_meters(&load_bbox, center_lat);
@@ -312,15 +312,14 @@ mod tests {
 
 pub fn filtra_raw_osm_data(
     accumulator: RawOsmData,
-    centro_lat: f64,
-    centro_lon: f64,
+    centro: WorldPos,
     raggio_metri: f64,
 ) -> RawOsmData {
     // 1) Tieni solo i nodi entro il raggio
     let nodes: Vec<_> = accumulator
         .nodes
         .into_iter()
-        .filter(|n| entro_raggio(n.lat, n.lon, centro_lat, centro_lon, raggio_metri))
+        .filter(|n| entro_raggio(n.pos, centro, raggio_metri))
         .collect();
 
     let node_ids: HashSet<i64> = nodes.iter().map(|n| n.id).collect();

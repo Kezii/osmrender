@@ -1,6 +1,6 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-use crate::chunk_manager::GeoBBox;
+use crate::{WorldPos, chunk_manager::GeoBBox};
 
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)
@@ -12,10 +12,10 @@ pub struct MapElement {
     /// - Per punti: un solo elemento
     /// - Per linee: sequenza di punti
     /// - Per poligoni: sequenza di punti chiusa (anello esterno)
-    pub vertices: Vec<(f64, f64)>,
+    pub vertices: Vec<WorldPos>,
     /// Anelli interni (buchi) per multipolygon
     /// Ogni anello interno è un vettore di coordinate (lat, lon)
-    pub inner_rings: Vec<Vec<(f64, f64)>>,
+    pub inner_rings: Vec<Vec<WorldPos>>,
     /// Tipo specifico dell'elemento
     pub element_type: ElementType,
 }
@@ -30,22 +30,22 @@ impl MapElement {
             min_lat: self
                 .vertices
                 .iter()
-                .map(|(lat, _)| *lat)
+                .map(|pos| pos.lat())
                 .fold(f64::INFINITY, f64::min),
             max_lat: self
                 .vertices
                 .iter()
-                .map(|(lat, _)| *lat)
+                .map(|pos| pos.lat())
                 .fold(f64::NEG_INFINITY, f64::max),
             min_lon: self
                 .vertices
                 .iter()
-                .map(|(_, lon)| *lon)
+                .map(|pos| pos.lon())
                 .fold(f64::INFINITY, f64::min),
             max_lon: self
                 .vertices
                 .iter()
-                .map(|(_, lon)| *lon)
+                .map(|pos| pos.lon())
                 .fold(f64::NEG_INFINITY, f64::max),
         }
     }
@@ -155,7 +155,7 @@ impl MapElement {
     }
 
     /// Restituisce tutte le coordinate dell'elemento come (lat, lon)
-    pub fn coordinate(&self) -> Vec<(f64, f64)> {
+    pub fn coordinate(&self) -> Vec<WorldPos> {
         self.vertices.clone()
     }
 
