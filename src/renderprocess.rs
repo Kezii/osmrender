@@ -214,10 +214,7 @@ impl RenderState {
         framebuffer: &mut D,
     ) -> Result<(), DrawError> {
         // Crea l'engine 3D
-        let mut engine = K3dengine::new(
-            framebuffer.size().width as u16,
-            framebuffer.size().height as u16,
-        );
+        let mut engine = K3dengine::new(framebuffer.limit().x as u16, framebuffer.limit().y as u16);
 
         // Configura la camera per vedere gli oggetti a z=0
         // Dopo la trasformazione view, z diventa la distanza dalla camera

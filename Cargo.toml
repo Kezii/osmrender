@@ -24,3 +24,4 @@ rustflags = ["-Clink-arg=-Wl,--no-rosegment"]
 
 [profile.release]
 debug = true
+#lto = true
