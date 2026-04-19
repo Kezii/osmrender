@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     render_state.reload_mesh_container(&mut framebuffer)?;
 
     // Usa la nuova funzione per stampare solo gli elementi nel raggio
-    render_state.renderizza_mappa(&mut framebuffer).unwrap();
+    //render_state.renderizza_mappa(&mut framebuffer).unwrap();
 
     // Converti il framebuffer in RgbImage e salva
     let img = RgbImage::from_raw(width, height, framebuffer.buffer)

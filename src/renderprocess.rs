@@ -4,6 +4,7 @@ use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
 use crate::rendering_adapter::{ConversionParams, OwnedMeshData, converti_a_mesh};
 use embedded_gfx::K3dengine;
+use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
 use embedded_gfx::mesh::K3dMesh;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -208,15 +209,10 @@ impl RenderState {
     }
 
     /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
-    pub fn renderizza_mappa<
-        D: DrawTarget<Color = embedded_graphics_core::pixelcolor::Rgb565> + OriginDimensions,
-    >(
+    pub fn renderizza_mappa<D: GFX2DCanvas<Color = embedded_graphics_core::pixelcolor::Rgb565>>(
         &self,
         framebuffer: &mut D,
-    ) -> Result<(), <D as DrawTarget>::Error>
-    where
-        <D as DrawTarget>::Error: std::fmt::Debug,
-    {
+    ) -> Result<(), DrawError> {
         // Crea l'engine 3D
         let mut engine = K3dengine::new(
             framebuffer.size().width as u16,
@@ -253,9 +249,9 @@ impl RenderState {
             primitive_count += 1;
             let e = draw(&p, framebuffer);
 
-            if let Err(e) = e {
+            /*if let Err(e) = e {
                 error!("Error drawing primitive: {:?} {:?}", p, e);
-            }
+            }*/
         });
         info!("Renderizzati {} primitivi", primitive_count);
 

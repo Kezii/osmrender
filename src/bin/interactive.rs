@@ -1,10 +1,12 @@
 use std::{collections::VecDeque, time::Instant};
 
+use embedded_gfx::framebuffer::{DmaReadyFramebuffer, StackFramebuffer};
 use embedded_graphics::{
     Drawable,
     mono_font::{MonoTextStyle, ascii::FONT_10X20},
     pixelcolor::Rgb565,
-    prelude::{DrawTarget, OriginDimensions, Point, RgbColor, Size},
+    prelude::{DrawTarget, OriginDimensions, PixelColor, Point, RgbColor, Size},
+    primitives::Rectangle,
     text::Text,
 };
 use embedded_graphics_simulator::{
@@ -82,6 +84,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut display = SimulatorDisplay::<Rgb565>::new(Size::new(1920, 1080));
     let mut window = Window::new("Window", &OutputSettings::default());
 
+    let mut stackframebuffer = StackFramebuffer::<1920, 1080, Rgb565>::new(Rgb565::BLACK);
+
     let mut centro_lat = 45.47362;
     let mut centro_lon = 9.24919;
     let mut raggio_metri = 200.0;
@@ -111,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 raggio_metri,
                 display.size(),
             );
+            render_state.reload_chunks()?;
             render_state.reload_map_elements()?;
             render_state.reload_mesh_container(&mut display)?;
             should_reload = false;
@@ -130,7 +135,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     raggio_metri -= (raggio_metri / 10.0) * scroll_delta.y as f64;
                     should_reload = true;
                     center_speed = None;
-                    render_state.reload_chunks()?;
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if click_down_point.is_some() {
@@ -140,7 +144,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     click_down_point = None;
                     previous_frame_point.clear();
                     should_reload = true;
-                    render_state.reload_chunks()?;
                 }
                 SimulatorEvent::MouseButtonDown { point, .. } => {
                     click_down_point = Some(point);
@@ -182,9 +185,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             center_speed = current_speed.apply_friction(frame_time_secs);
         }
 
-        display.clear(Rgb565::BLACK);
+        stackframebuffer.clear(Rgb565::BLACK);
 
-        render_state.renderizza_mappa(&mut display)?;
+        render_state.renderizza_mappa(&mut stackframebuffer);
 
         Text::new(
             &format!(
@@ -195,7 +198,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Point::new(10, 20),
             text_style,
         )
-        .draw(&mut display)?;
+        .draw(&mut stackframebuffer)?;
+
+        let area = Rectangle::new(Point::new(0, 0), stackframebuffer.size());
+        display.fill_contiguous(
+            &area,
+            stackframebuffer.framebuffer.iter().flatten().copied(),
+        );
     }
 
     Ok(())
