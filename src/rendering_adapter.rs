@@ -18,6 +18,7 @@ pub struct OwnedMeshData {
     pub normals: Vec<[f32; 3]>,
     pub color: Rgb565,
     pub render_mode: RenderMode,
+    pub priority: u8,
 }
 
 impl OwnedMeshData {
@@ -364,40 +365,64 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     faces
 }
 
-/// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
-/// Usa la coordinata Z per gestire le occlusioni in base alla priorità
-pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec<OwnedMeshData> {
-    if elementi.is_empty() {
-        return Vec::new();
-    }
+impl MapElement {
+    /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
+    /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
+    pub fn converti_a_mesh(&self, params: &ConversionParams) -> Option<OwnedMeshData> {
+        let pixel_to_world = params.scale_factor;
 
-    let pixel_to_world = params.scale_factor;
+        // Raccogliamo tutti i dati degli elementi
+        struct ElementData {
+            id: i64,
+            vertices: Vec<[f32; 3]>,
+            lines: Vec<[usize; 2]>,
+            faces: Vec<[usize; 3]>,
+            normals: Vec<[f32; 3]>,
+            color: Rgb565,
+            is_solid: bool,
+            priority: u8,
+        }
 
-    // Raccogliamo tutti i dati degli elementi
-    struct ElementData {
-        id: i64,
-        vertices: Vec<[f32; 3]>,
-        lines: Vec<[usize; 2]>,
-        faces: Vec<[usize; 3]>,
-        normals: Vec<[f32; 3]>,
-        color: Rgb565,
-        is_solid: bool,
-        priority: u8,
-    }
+        impl ElementData {
+            pub fn to_owned_mesh_data(&self, params: &ConversionParams) -> OwnedMeshData {
+                {
+                    let has_faces = !self.faces.is_empty();
+                    let mesh_data = OwnedMeshData {
+                        vertices: self.vertices.clone(),
+                        // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
+                        // Per altri, mostra le linee normali
+                        lines: if self.is_solid && has_faces {
+                            Vec::new() // Poligoni solidi usano il riempimento, non le linee
+                        } else {
+                            self.lines.clone()
+                        },
+                        faces: self.faces.clone(),
+                        normals: self.normals.clone(),
+                        color: self.color,
+                        // Usa Solid per poligoni solidi con triangoli, Lines per il resto
+                        render_mode: if self.is_solid && has_faces && !params.force_wireframe {
+                            RenderMode::Solid
+                        } else {
+                            RenderMode::Lines
+                        },
+                        priority: self.priority,
+                    };
+                    mesh_data
+                }
+            }
+        }
 
-    let mut element_data_vec: Vec<ElementData> = Vec::new();
+        let mut element_data = None;
 
-    // Prepara i dati per tutti gli elementi
-    for elemento in elementi {
-        let color = elemento.colore();
-        let priority = elemento.priorita_rendering();
-        let coordinate = elemento.coordinate();
+        let color = self.colore();
+        let priority = self.priorita_rendering();
+        let coordinate = self.coordinate();
 
         // Gestisci punti (alberi, punti interesse)
-        if elemento.is_punto() {
+        if self.is_punto() {
             if let Some(pos) = coordinate.first() {
                 let [x, y, z] = params.to_3d(pos, priority);
-                let (radius_pixels, n_points) = match elemento.element_type {
+                let (radius_pixels, n_points) = match self.element_type {
                     ElementType::Albero => (8.0, 12),
                     ElementType::PuntoInteresse { .. } => (3.0, 12),
                     _ => (2.0, 10),
@@ -416,8 +441,8 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
                     lines.push([i, (i + 1) % n_points]);
                 }
 
-                element_data_vec.push(ElementData {
-                    id: elemento.id(),
+                element_data = Some(ElementData {
+                    id: self.id(),
                     vertices,
                     lines,
                     faces: Vec::new(),
@@ -430,7 +455,7 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
         } else {
             // Gestisci linee e poligoni
             if coordinate.len() < 2 {
-                continue;
+                return None;
             }
 
             let mut vertices = Vec::new();
@@ -441,19 +466,19 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
             }
 
             // Debug: verifica z per edifici
-            if matches!(elemento.element_type, ElementType::Edificio) && !vertices.is_empty() {
+            if matches!(self.element_type, ElementType::Edificio) && !vertices.is_empty() {
                 let z = vertices[0][2];
                 if z < 0.01 {
                     eprintln!(
                         "⚠️  Edificio ID {} ha z={} (priorità={}), potrebbe essere nascosto",
-                        elemento.id(),
+                        self.id(),
                         z,
                         priority
                     );
                 }
             }
 
-            let mut is_solid = elemento.is_chiuso() && vertices.len() >= 3;
+            let mut is_solid = self.is_chiuso() && vertices.len() >= 3;
 
             let mut lines = Vec::new();
             let mut faces = Vec::new();
@@ -461,7 +486,7 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
 
             if is_solid {
                 // Converti gli inner_rings (buchi) da coordinate geografiche a 3D
-                let inner_rings_3d: Vec<Vec<[f32; 3]>> = elemento
+                let inner_rings_3d: Vec<Vec<[f32; 3]>> = self
                     .inner_rings
                     .iter()
                     .map(|inner_ring| {
@@ -493,8 +518,8 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
                 if faces.is_empty() {
                     debug!(
                         "⚠️  Triangolazione fallita per elemento ID {} (tipo: {:?}), {} vertici, {} buchi",
-                        elemento.id(),
-                        elemento.element_type,
+                        self.id(),
+                        self.element_type,
                         vertices.len(),
                         inner_rings_3d.len()
                     );
@@ -523,8 +548,8 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
                 }
             }
 
-            element_data_vec.push(ElementData {
-                id: elemento.id(),
+            element_data = Some(ElementData {
+                id: self.id(),
                 vertices,
                 lines,
                 faces,
@@ -534,46 +559,7 @@ pub fn converti_a_mesh(elementi: &[MapElement], params: ConversionParams) -> Vec
                 priority,
             });
         }
+
+        element_data.map(|e| e.to_owned_mesh_data(params))
     }
-
-    // Converti ElementData in MeshData e ordina per priorità
-    // Priorità più bassa = renderizzata prima (sotto), priorità più alta = renderizzata dopo (sopra)
-    let mut mesh_data_vec: Vec<(OwnedMeshData, u8, i64)> = element_data_vec
-        .into_iter()
-        .map(|e| {
-            let has_faces = !e.faces.is_empty();
-            let mesh_data = OwnedMeshData {
-                vertices: e.vertices,
-                // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
-                // Per altri, mostra le linee normali
-                lines: if e.is_solid && has_faces {
-                    Vec::new() // Poligoni solidi usano il riempimento, non le linee
-                } else {
-                    e.lines
-                },
-                faces: e.faces,
-                normals: e.normals,
-                color: e.color,
-                // Usa Solid per poligoni solidi con triangoli, Lines per il resto
-                render_mode: if e.is_solid && has_faces && !params.force_wireframe {
-                    RenderMode::Solid
-                } else {
-                    RenderMode::Lines
-                },
-            };
-            (mesh_data, e.priority, e.id)
-        })
-        .collect();
-
-    // Ordina per priorità (più bassa prima), poi per ID per garantire consistenza
-    mesh_data_vec.sort_by_key(|(_, priority, id)| (*priority, *id));
-
-    // Estrai solo i MeshData (ora ordinati)
-    let mesh_data_vec: Vec<OwnedMeshData> = mesh_data_vec
-        .into_iter()
-        .map(|(mesh_data, _, _)| mesh_data)
-        .collect();
-
-    // Crea il container con i dati delle mesh
-    mesh_data_vec
 }

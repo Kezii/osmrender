@@ -3,7 +3,7 @@ use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox
 use crate::imageframebuffer::ImageFramebuffer;
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
-use crate::rendering_adapter::{ConversionParams, OwnedMeshData, converti_a_mesh};
+use crate::rendering_adapter::{ConversionParams, OwnedMeshData};
 use embedded_gfx::K3dengine;
 use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
@@ -194,7 +194,13 @@ impl RenderState {
             force_wireframe: false,
         };
 
-        let mesh_container = converti_a_mesh(&self.map_elements, params);
+        let mut mesh_container: Vec<OwnedMeshData> = self
+            .map_elements
+            .iter()
+            .filter_map(|e| e.converti_a_mesh(&params))
+            .collect();
+
+        mesh_container.sort_by_key(|m| m.priority);
 
         self.mesh_container = mesh_container;
         Ok(())
