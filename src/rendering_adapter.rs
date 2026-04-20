@@ -542,19 +542,6 @@ impl MapElement {
                 vertices.push(vertex);
             }
 
-            // Debug: verifica z per edifici
-            if matches!(self.element_type, ElementType::Edificio) && !vertices.is_empty() {
-                let z = vertices[0][2];
-                if z < 0.01 {
-                    eprintln!(
-                        "⚠️  Edificio ID {} ha z={} (priorità={}), potrebbe essere nascosto",
-                        self.id(),
-                        z,
-                        priority
-                    );
-                }
-            }
-
             let mut is_solid = self.is_chiuso() && vertices.len() >= 3;
 
             let mut lines = Vec::new();
