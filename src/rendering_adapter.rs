@@ -38,8 +38,8 @@ impl OwnedMeshData {
 }
 
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
-pub struct ConversionParams {
-    /// dove piazziamo il centro del mondo
+pub struct MapToMeshConversionParams {
+    /// this becomes the 0,0 point of the world
     pub center_offset: WorldPos,
     /// Fattore di scala per le coordinate world space
     pub scale_factor: f64,
@@ -51,7 +51,7 @@ pub struct ConversionParams {
     pub force_wireframe: bool,
 }
 
-impl ConversionParams {
+impl MapToMeshConversionParams {
     /// Converte coordinate geografiche a coordinate 3D world space
     /// priority: priorità di rendering (0 = più bassa, sotto tutto)
     fn to_3d(&self, pos: &WorldPos, priority: u8) -> [f32; 3] {
@@ -339,7 +339,7 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
 impl MapElement {
     /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
     /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
-    pub fn converti_a_mesh(&self, params: &ConversionParams) -> Option<OwnedMeshData> {
+    pub fn converti_a_mesh(&self, params: &MapToMeshConversionParams) -> Option<OwnedMeshData> {
         let pixel_to_world = params.scale_factor as f32;
 
         // Raccogliamo tutti i dati degli elementi
@@ -356,7 +356,7 @@ impl MapElement {
         }
 
         impl ElementData {
-            pub fn to_owned_mesh_data(&self, params: &ConversionParams) -> OwnedMeshData {
+            pub fn to_owned_mesh_data(&self, params: &MapToMeshConversionParams) -> OwnedMeshData {
                 {
                     let has_faces = !self.faces.is_empty();
                     let mesh_data = OwnedMeshData {

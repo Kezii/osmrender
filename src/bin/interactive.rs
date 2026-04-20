@@ -94,9 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         current_center: spawn_point,
         camera_fovy: 0.64,
         chunks: Vec::new(),
-        map_elements: Vec::new(),
         mesh_container: Vec::new(),
-        load_bbox: GeoBBox::default(),
         viewport_size: display.size(),
     };
 
@@ -114,10 +112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.set_bbox_for_viewport();
             render_state.reload_chunks()?;
-            render_state.reload_map_elements()?;
-            render_state.reload_mesh_container(spawn_point)?;
+            render_state.map_to_mesh(spawn_point)?;
             should_reload = false;
         }
 

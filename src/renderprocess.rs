@@ -3,7 +3,7 @@ use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox
 use crate::imageframebuffer::ImageFramebuffer;
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
-use crate::rendering_adapter::{ConversionParams, OwnedMeshData};
+use crate::rendering_adapter::{MapToMeshConversionParams, OwnedMeshData};
 use embedded_gfx::K3dengine;
 use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
@@ -76,10 +76,8 @@ fn bbox_for_viewport(centro: WorldPos, raggio_metri: f64, viewport: Size) -> Geo
 
 pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
-    pub map_elements: Vec<MapElement>,
     pub mesh_container: Vec<OwnedMeshData>,
     pub viewport_size: Size,
-    pub load_bbox: GeoBBox,
     pub camera_fovy: f32,
     pub spawn_point: WorldPos,
     pub current_center: WorldPos,
@@ -138,11 +136,6 @@ impl RenderState {
         }
     }
 
-    pub fn set_bbox_for_viewport(&mut self) {
-        self.load_bbox =
-            self.expanded_bbox_for_loading(&self.get_actual_bbox(), self.viewport_size);
-    }
-
     pub fn get_actual_bbox(&self) -> GeoBBox {
         let (visible_width_m, visible_height_m) =
             self.visible_meters_for_viewport(self.viewport_size);
@@ -161,33 +154,32 @@ impl RenderState {
     }
 
     pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let load_bbox = self.expanded_bbox_for_loading(&self.get_actual_bbox(), self.viewport_size);
+
         let cfg = ChunkConfig {
             chunk_size_m: 2000.0,
         };
 
-        let chunks = load_chunks_for_bbox::<MapElement>("chunks", &self.load_bbox, cfg)?;
+        let chunks = load_chunks_for_bbox::<MapElement>("chunks", &load_bbox, cfg)?;
 
         self.chunks = chunks;
 
         Ok(())
     }
 
-    pub fn reload_map_elements(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let now = Instant::now();
-        let chunk_bboxes = self.chunks.iter().map(|c| c.bbox()).collect::<Vec<_>>();
-        let elementi_mappa = self
-            .chunks
+    pub fn get_flat_map_elements(&mut self) -> impl Iterator<Item = &MapElement> {
+        self.chunks
             .iter()
             .flat_map(|e| e.data.iter())
-            .collect::<Vec<_>>();
+            .map(|e| &e.primitive)
+    }
 
-        let mut elementi_mappa = elementi_mappa
+    pub fn get_chunk_borders(&self) -> impl Iterator<Item = MapElement> {
+        self.chunks
             .iter()
-            .map(|e| e.primitive.clone())
-            .collect::<Vec<_>>();
-
-        if SHOW_CHUNK_BORDERS {
-            for (i, cb) in chunk_bboxes.into_iter().enumerate() {
+            .map(|c| c.bbox())
+            .enumerate()
+            .map(|(i, cb)| {
                 let verts = vec![
                     WorldPos::new(cb.min_lat, cb.min_lon),
                     WorldPos::new(cb.min_lat, cb.max_lon),
@@ -195,28 +187,20 @@ impl RenderState {
                     WorldPos::new(cb.max_lat, cb.min_lon),
                     WorldPos::new(cb.min_lat, cb.min_lon),
                 ];
-                elementi_mappa.push(MapElement {
+                MapElement {
                     id: -1 - (i as i64),
                     vertices: verts,
                     inner_rings: Vec::new(),
                     element_type: ElementType::ChunkBorder,
-                });
-            }
-        }
-
-        let elapsed = now.elapsed();
-        println!("Tempo di conversione elementi mappa: {:?}", elapsed);
-
-        self.map_elements = elementi_mappa;
-        Ok(())
+                }
+            })
     }
 
-    pub fn reload_mesh_container(
+    pub fn map_to_mesh(
         &mut self,
         spawn_point: WorldPos,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let params = ConversionParams {
-            /// this becomes the 0,0 point of the world
+        let params = MapToMeshConversionParams {
             center_offset: spawn_point,
             scale_factor: MAP_SCALE_FACTOR as f64,
             z_base: 0.0,     // Base z per elementi con priorità 0
@@ -225,10 +209,16 @@ impl RenderState {
         };
 
         let mut mesh_container: Vec<OwnedMeshData> = self
-            .map_elements
-            .iter()
+            .get_flat_map_elements()
             .filter_map(|e| e.converti_a_mesh(&params))
             .collect();
+
+        if SHOW_CHUNK_BORDERS {
+            mesh_container.extend(
+                self.get_chunk_borders()
+                    .filter_map(|e| e.converti_a_mesh(&params)),
+            );
+        }
 
         mesh_container.sort_by_key(|m| m.priority);
 
