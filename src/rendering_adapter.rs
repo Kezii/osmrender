@@ -1,5 +1,5 @@
 use crate::{
-    WorldPos,
+    GeoPos,
     chunk_manager::GeoBBox,
     map_elements::{ElementType, MapElement},
 };
@@ -39,7 +39,7 @@ impl OwnedMeshData {
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
 pub struct MapToMeshConversionParams {
     /// this becomes the 0,0 point of the world
-    pub center_offset: WorldPos,
+    pub center_offset: GeoPos,
     /// Fattore di scala per le coordinate world space
     pub scale_factor: f64,
     /// Offset Z per la priorità più bassa (elementi che stanno sotto)
@@ -53,7 +53,7 @@ pub struct MapToMeshConversionParams {
 impl MapToMeshConversionParams {
     /// Converte coordinate geografiche a coordinate 3D world space
     /// priority: priorità di rendering (0 = più bassa, sotto tutto)
-    fn to_3d(&self, pos: &WorldPos, priority: u8) -> [f32; 3] {
+    fn to_3d(&self, pos: &GeoPos, priority: u8) -> [f32; 3] {
         let (north_m, east_m) = self.center_offset.offset_in_meters(*pos);
 
         let x_world = east_m * self.scale_factor;

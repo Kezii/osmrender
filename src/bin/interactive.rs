@@ -13,7 +13,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{WorldPos, chunk_manager::GeoBBox, renderprocess::RenderState};
+use osmrender::{GeoPos, chunk_manager::GeoBBox, renderprocess::RenderState};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stackframebuffer = StackFramebuffer::<1920, 1080, Rgb565>::new(Rgb565::BLACK);
 
-    let spawn_point = WorldPos::new(45.47362, 9.24919);
+    let spawn_point = GeoPos::new(45.47362, 9.24919);
     let mut should_reload = true;
 
     let mut text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Durante il pan il punto sotto al cursore deve restare lo stesso,
                         // quindi il centro si muove in senso opposto al delta del mouse.
                         // Il fattore di pan include la porzione realmente visibile tramite camera.
-                        render_state.current_center += WorldPos::new(
+                        render_state.current_center += GeoPos::new(
                             delta.y as f64 * lat_per_pixel,
                             -delta.x as f64 * lon_per_pixel,
                         );
@@ -174,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let display_size = display.size();
             let (lat_per_pixel, lon_per_pixel) = geo_delta_per_pixel(&render_state, display_size);
 
-            render_state.current_center += WorldPos::new(
+            render_state.current_center += GeoPos::new(
                 current_speed.y * lat_per_pixel,
                 -current_speed.x * lon_per_pixel,
             );

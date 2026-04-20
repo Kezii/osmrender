@@ -2,7 +2,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    WorldPos,
+    GeoPos,
     map_elements::{ElementType, MapElement},
     raw_osm_reader::{NodeData, RawOsmData, RelationData, RelationMemberType, WayData},
 };
@@ -75,9 +75,9 @@ pub fn converti_nodo(node_data: &NodeData) -> Option<MapElement> {
 }
 
 /// Converte una way OSM in un elemento della mappa
-pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> Option<MapElement> {
+pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, GeoPos>) -> Option<MapElement> {
     // Raccogli i nodi della way che sono nel raggio
-    let vertices: Vec<WorldPos> = way_data
+    let vertices: Vec<GeoPos> = way_data
         .node_refs
         .iter()
         .filter_map(|&node_id| node_index.get(&node_id).copied())
@@ -372,7 +372,7 @@ pub struct ConversionResult {
 fn converti_multipolygon(
     relation_data: &RelationData,
     ways_data: &HashMap<i64, &WayData>,
-    node_index: &HashMap<i64, WorldPos>,
+    node_index: &HashMap<i64, GeoPos>,
 ) -> Option<MapElement> {
     // Raccogli gli anelli outer e inner
     let mut outer_ways: Vec<&WayData> = Vec::new();
@@ -401,14 +401,14 @@ fn converti_multipolygon(
     #[allow(clippy::type_complexity)]
     fn combina_ways_in_ring(
         ways: &[&WayData],
-        node_index: &HashMap<i64, WorldPos>,
-    ) -> Option<Vec<WorldPos>> {
+        node_index: &HashMap<i64, GeoPos>,
+    ) -> Option<Vec<GeoPos>> {
         if ways.is_empty() {
             return None;
         }
 
         // Costruisci una lista di (node_ids, vertices) per ogni way
-        let mut way_data: Vec<(Vec<i64>, Vec<WorldPos>)> = Vec::new();
+        let mut way_data: Vec<(Vec<i64>, Vec<GeoPos>)> = Vec::new();
         for way in ways {
             let mut node_ids = Vec::new();
             let mut vertices = Vec::new();
@@ -444,7 +444,7 @@ fn converti_multipolygon(
         // Combina le ways trovando i punti di connessione usando i node_id
         let mut used_ways = std::collections::HashSet::new();
         let mut ring_node_ids: Vec<i64> = Vec::new();
-        let mut ring_vertices: Vec<WorldPos> = Vec::new();
+        let mut ring_vertices: Vec<GeoPos> = Vec::new();
 
         // Inizia con la prima way
         if let Some((first_node_ids, first_vertices)) = way_data.first() {
@@ -594,10 +594,10 @@ fn converti_multipolygon(
     }
 
     // Costruisci gli anelli inner (buchi)
-    let inner_rings: Vec<Vec<WorldPos>> = inner_ways
+    let inner_rings: Vec<Vec<GeoPos>> = inner_ways
         .iter()
         .filter_map(|way| {
-            let vertices: Vec<WorldPos> = way
+            let vertices: Vec<GeoPos> = way
                 .node_refs
                 .iter()
                 .filter_map(|&node_id| node_index.get(&node_id).copied())
@@ -660,7 +660,7 @@ pub fn converti_elementi_osm_posizionati(accumulator: RawOsmData) -> Vec<MapElem
     let mut elementi: Vec<MapElement> = Vec::new();
 
     // Indice rapido id_nodo -> (lat, lon). A questo punto `accumulator.nodes` è già filtrato.
-    let node_index: HashMap<i64, WorldPos> =
+    let node_index: HashMap<i64, GeoPos> =
         accumulator.nodes.iter().map(|n| (n.id, n.pos)).collect();
 
     // Mappa ways per accesso rapido (senza clone)

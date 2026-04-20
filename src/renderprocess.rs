@@ -1,4 +1,4 @@
-use crate::WorldPos;
+use crate::GeoPos;
 use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox};
 use crate::imageframebuffer::ImageFramebuffer;
 use crate::map_elements::{ElementType, MapElement};
@@ -25,7 +25,7 @@ pub const CAMERA_DISTANCE: f32 = 2.0;
 const CHUNK_LOAD_OVERSCAN: f64 = 1.05;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
-fn distanza_geografica(point1: WorldPos, point2: WorldPos) -> f64 {
+fn distanza_geografica(point1: GeoPos, point2: GeoPos) -> f64 {
     const R: f64 = 6371000.0; // Raggio della Terra in metri
 
     let d_lat = (point2.lat() - point1.lat()).to_radians();
@@ -42,11 +42,11 @@ fn distanza_geografica(point1: WorldPos, point2: WorldPos) -> f64 {
 }
 
 /// Verifica se un punto è entro un raggio specificato da un punto centrale
-fn entro_raggio(pos: WorldPos, centro: WorldPos, raggio_metri: f64) -> bool {
+fn entro_raggio(pos: GeoPos, centro: GeoPos, raggio_metri: f64) -> bool {
     distanza_geografica(pos, centro) <= raggio_metri
 }
 
-fn bbox_for_viewport(centro: WorldPos, raggio_metri: f64, viewport: Size) -> GeoBBox {
+fn bbox_for_viewport(centro: GeoPos, raggio_metri: f64, viewport: Size) -> GeoBBox {
     let aspect_ratio = if viewport.height == 0 {
         1.0
     } else {
@@ -96,8 +96,8 @@ pub struct RenderState {
     pub mesh_container: Vec<OwnedMeshData>,
     pub viewport_size: Size,
     pub camera_fovy: f32,
-    pub spawn_point: WorldPos,
-    pub current_center: WorldPos,
+    pub spawn_point: GeoPos,
+    pub current_center: GeoPos,
 }
 
 impl RenderState {
@@ -224,11 +224,11 @@ impl RenderState {
             .enumerate()
             .map(|(i, cb)| {
                 let verts = vec![
-                    WorldPos::new(cb.min_lat, cb.min_lon),
-                    WorldPos::new(cb.min_lat, cb.max_lon),
-                    WorldPos::new(cb.max_lat, cb.max_lon),
-                    WorldPos::new(cb.max_lat, cb.min_lon),
-                    WorldPos::new(cb.min_lat, cb.min_lon),
+                    GeoPos::new(cb.min_lat, cb.min_lon),
+                    GeoPos::new(cb.min_lat, cb.max_lon),
+                    GeoPos::new(cb.max_lat, cb.max_lon),
+                    GeoPos::new(cb.max_lat, cb.min_lon),
+                    GeoPos::new(cb.min_lat, cb.min_lon),
                 ];
                 MapElement {
                     id: -1 - (i as i64),
@@ -239,7 +239,7 @@ impl RenderState {
             })
     }
 
-    pub fn map_to_mesh(&mut self, spawn_point: WorldPos) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn map_to_mesh(&mut self, spawn_point: GeoPos) -> Result<(), Box<dyn std::error::Error>> {
         let params = MapToMeshConversionParams {
             center_offset: spawn_point,
             scale_factor: MAP_SCALE_FACTOR as f64,
@@ -269,7 +269,7 @@ impl RenderState {
     /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
     pub fn renderizza_mappa<D: GFX2DCanvas<Color = embedded_graphics_core::pixelcolor::Rgb565>>(
         &self,
-        _coordinates: WorldPos,
+        _coordinates: GeoPos,
         framebuffer: &mut D,
     ) -> Result<usize, DrawError> {
         // Crea l'engine 3D
@@ -330,7 +330,7 @@ pub fn filtra_map_elements(elementi_mappa: Vec<MapElement>, bbox: &GeoBBox) -> V
 
 pub fn filtra_raw_osm_data(
     accumulator: RawOsmData,
-    centro: WorldPos,
+    centro: GeoPos,
     raggio_metri: f64,
 ) -> RawOsmData {
     // 1) Tieni solo i nodi entro il raggio

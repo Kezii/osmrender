@@ -1,6 +1,6 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-use crate::{WorldPos, chunk_manager::GeoBBox};
+use crate::{GeoPos, chunk_manager::GeoBBox};
 
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)
@@ -12,10 +12,10 @@ pub struct MapElement {
     /// - Per punti: un solo elemento
     /// - Per linee: sequenza di punti
     /// - Per poligoni: sequenza di punti chiusa (anello esterno)
-    pub vertices: Vec<WorldPos>,
+    pub vertices: Vec<GeoPos>,
     /// Anelli interni (buchi) per multipolygon
     /// Ogni anello interno è un vettore di coordinate (lat, lon)
-    pub inner_rings: Vec<Vec<WorldPos>>,
+    pub inner_rings: Vec<Vec<GeoPos>>,
     /// Tipo specifico dell'elemento
     pub element_type: ElementType,
 }

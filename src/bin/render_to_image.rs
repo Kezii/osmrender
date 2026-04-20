@@ -1,12 +1,12 @@
 use embedded_graphics::prelude::OriginDimensions;
 use image::RgbImage;
-use osmrender::{WorldPos, imageframebuffer::ImageFramebuffer, renderprocess::RenderState};
+use osmrender::{GeoPos, imageframebuffer::ImageFramebuffer, renderprocess::RenderState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     // Esempio: coordinate di Milano (puoi modificare queste coordinate)
-    let centro = WorldPos::new(45.47362, 9.24919);
+    let centro = GeoPos::new(45.47362, 9.24919);
     let raggio_metri = 1000.0;
 
     //print_from_id("nord-ovest-251207.osm.pbf", 159322216)?;

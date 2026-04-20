@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    WorldPos,
+    GeoPos,
     chunk_manager::GeoBBox,
     converter::SpatialNodeData,
     raw_osm_reader::{NodeData, RelationData, RelationMemberType, WayData},
@@ -57,7 +57,7 @@ impl BBox {
         }
     }
 
-    fn add(&mut self, pos: WorldPos) {
+    fn add(&mut self, pos: GeoPos) {
         if !pos.lat().is_finite() || !pos.lon().is_finite() {
             return;
         }
@@ -89,7 +89,7 @@ impl BBox {
     }
 }
 
-fn way_bbox(way: &WayData, node_pos: &HashMap<i64, WorldPos>) -> Option<GeoBBox> {
+fn way_bbox(way: &WayData, node_pos: &HashMap<i64, GeoPos>) -> Option<GeoBBox> {
     let mut bbox = BBox::new();
     for node_id in &way.node_refs {
         if let Some(&pos) = node_pos.get(node_id) {
@@ -102,7 +102,7 @@ fn way_bbox(way: &WayData, node_pos: &HashMap<i64, WorldPos>) -> Option<GeoBBox>
 fn relation_bbox(
     rel: &RelationData,
     ways_by_id: &HashMap<i64, &WayData>,
-    node_pos: &HashMap<i64, WorldPos>,
+    node_pos: &HashMap<i64, GeoPos>,
 ) -> Option<GeoBBox> {
     let mut bbox = BBox::new();
 
@@ -140,7 +140,7 @@ pub fn build_spatial_index(
     ways: Vec<WayData>,
     relations: Vec<RelationData>,
 ) -> Vec<PositionedPrimitive> {
-    let node_pos: HashMap<i64, WorldPos> = nodes.par_iter().map(|n| (n.id, n.pos)).collect();
+    let node_pos: HashMap<i64, GeoPos> = nodes.par_iter().map(|n| (n.id, n.pos)).collect();
 
     println!("node index done");
 
