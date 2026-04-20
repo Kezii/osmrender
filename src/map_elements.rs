@@ -61,6 +61,8 @@ pub enum ElementType {
     StradaSecondaria,
     /// Strada locale (linea aperta)
     StradaLocale,
+    /// Strada sterrata o non asfaltata (linea aperta)
+    StradaSterrata,
     /// Strada pedonale (linea aperta)
     StradaPedonale,
     /// Ferrovia (linea aperta)
@@ -137,6 +139,7 @@ impl MapElement {
             ElementType::StradaPrincipale => Some(8.0),
             ElementType::StradaSecondaria => Some(6.0),
             ElementType::StradaLocale => Some(4.0),
+            ElementType::StradaSterrata => Some(4.0),
             ElementType::StradaPedonale => Some(2.0),
             ElementType::Ferrovia => Some(4.0),
             _ => None,
@@ -150,6 +153,7 @@ impl MapElement {
             ElementType::StradaPrincipale
                 | ElementType::StradaSecondaria
                 | ElementType::StradaLocale
+                | ElementType::StradaSterrata
                 | ElementType::StradaPedonale
                 | ElementType::Ferrovia
                 | ElementType::Fiume
@@ -166,11 +170,12 @@ impl MapElement {
     }
 
     /// Determina il colore per l'elemento della mappa
-    pub fn colore(&self) -> Rgb565 {
-        match self.element_type {
+    pub fn color_theme_standard(&self) -> Option<Rgb565> {
+        Some(match self.element_type {
             ElementType::StradaPrincipale => Rgb565::new(200 >> 3, 80 >> 2, 40 >> 3),
             ElementType::StradaSecondaria => Rgb565::new(220 >> 3, 120 >> 2, 60 >> 3),
             ElementType::StradaLocale => Rgb565::new(180 >> 3, 180 >> 2, 180 >> 3),
+            ElementType::StradaSterrata => Rgb565::new(116 >> 3, 101 >> 2, 83 >> 3),
             ElementType::StradaPedonale => Rgb565::new(200 >> 3, 200 >> 2, 150 >> 3),
             ElementType::Ferrovia => Rgb565::new(100 >> 3, 100 >> 2, 100 >> 3),
             ElementType::Fiume => Rgb565::new(50 >> 3, 100 >> 2, 200 >> 3),
@@ -203,6 +208,42 @@ impl MapElement {
                 }
             }
             ElementType::ChunkBorder => Rgb565::new(31, 0, 0),
+        })
+    }
+
+    pub fn color_theme_gta(&self) -> Option<Rgb565> {
+        match self.element_type {
+            //ElementType::Nothing => Some(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3)),
+            ElementType::StradaPrincipale => Some(Rgb565::new(0 >> 3, 0 >> 2, 0 >> 3)),
+            ElementType::StradaSecondaria => Some(Rgb565::new(0 >> 3, 0 >> 2, 0 >> 3)),
+            ElementType::StradaLocale => Some(Rgb565::new(0 >> 3, 0 >> 2, 0 >> 3)),
+            ElementType::StradaSterrata => Some(Rgb565::new(116 >> 3, 101 >> 2, 83 >> 3)),
+            ElementType::StradaPedonale => Some(Rgb565::new(0 >> 3, 0 >> 2, 0 >> 3)),
+            ElementType::Ferrovia => Some(Rgb565::new(75 >> 3, 13 >> 2, 0 >> 3)),
+            ElementType::Fiume => Some(Rgb565::new(114 >> 3, 138 >> 2, 175 >> 3)),
+            ElementType::Canale => Some(Rgb565::new(114 >> 3, 138 >> 2, 175 >> 3)),
+            ElementType::Edificio => Some(Rgb565::new(254 >> 3, 249 >> 2, 254 >> 3)),
+            ElementType::Parco => Some(Rgb565::new(123 >> 3, 138 >> 2, 58 >> 3)),
+            ElementType::Acqua => Some(Rgb565::new(114 >> 3, 138 >> 2, 175 >> 3)),
+            ElementType::Foresta => Some(Rgb565::new(58 >> 3, 105 >> 2, 41 >> 3)), // Verde più scuro per landuse:forest
+            ElementType::Boscaglia => Some(Rgb565::new(58 >> 3, 105 >> 2, 41 >> 3)),
+            ElementType::Residenziale => None,
+            ElementType::Commerciale => None,
+            ElementType::Industriale => None,
+            ElementType::Agricolo => Some(Rgb565::new(123 >> 3, 138 >> 2, 58 >> 3)),
+            ElementType::Aeroporto => None,
+            ElementType::Cimitero => None,
+            ElementType::CampoSportivo => Some(Rgb565::new(123 >> 3, 138 >> 2, 58 >> 3)),
+            ElementType::Albero => None,
+            ElementType::PuntoInteresse { ha_nome } => None,
+            ElementType::Altro { is_punto } => {
+                if is_punto {
+                    None
+                } else {
+                    Some(Rgb565::new(120 >> 3, 130 >> 2, 140 >> 3))
+                }
+            }
+            ElementType::ChunkBorder => None, //Some(Rgb565::new(31, 0, 0)),
         }
     }
 
@@ -223,6 +264,7 @@ impl MapElement {
             ElementType::Edificio => 3,
             ElementType::Fiume | ElementType::Canale => 4,
             ElementType::StradaPedonale => 5,
+            ElementType::StradaSterrata => 6,
             ElementType::StradaLocale => 6,
             ElementType::StradaSecondaria => 7,
             ElementType::StradaPrincipale => 8,

@@ -489,7 +489,7 @@ impl MapElement {
 
         let mut element_data = None;
 
-        let color = self.colore();
+        let color = self.color_theme_gta()?;
         let priority = self.priorita_rendering();
 
         // Gestisci punti (alberi, punti interesse)

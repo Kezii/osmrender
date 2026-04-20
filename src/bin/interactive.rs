@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             center_speed = current_speed.apply_friction(frame_time_secs);
         }
 
-        stackframebuffer.clear(Rgb565::BLACK);
+        stackframebuffer.clear(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3));
 
         render_state.renderizza_mappa(spawn_point, &mut stackframebuffer);
 

@@ -87,11 +87,39 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
         return None;
     }
 
+    let get_tag = |key: &str| {
+        way_data
+            .tags
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    };
+    let has_unpaved_surface = matches!(
+        get_tag("surface"),
+        Some(
+            "unpaved"
+                | "compacted"
+                | "fine_gravel"
+                | "gravel"
+                | "pebblestone"
+                | "rock"
+                | "dirt"
+                | "earth"
+                | "ground"
+                | "mud"
+                | "sand"
+                | "grass"
+        )
+    ) || matches!(
+        get_tag("tracktype"),
+        Some("grade2" | "grade3" | "grade4" | "grade5")
+    );
+
     // Classifica il tipo di way in base ai tag
     let elemento = {
         // Controlla prima i waterway (fiumi, canali)
-        if let Some((_, v)) = way_data.tags.iter().find(|(k, _)| k == "waterway") {
-            match v.as_str() {
+        if let Some(v) = get_tag("waterway") {
+            match v {
                 "river" | "stream" => MapElement {
                     id: way_data.id,
                     vertices: vertices.clone(),
@@ -223,8 +251,8 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
             }
         }
         // Controlla l'acqua da natural (dopo landuse/leisure)
-        else if let Some((_, v)) = way_data.tags.iter().find(|(k, _)| k == "natural") {
-            match v.as_str() {
+        else if let Some(v) = get_tag("natural") {
+            match v {
                 "water" => MapElement {
                     id: way_data.id,
                     vertices: vertices.clone(),
@@ -252,8 +280,8 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
             }
         }
         // Controlla acqua da leisure (piscine)
-        else if let Some((_, v)) = way_data.tags.iter().find(|(k, _)| k == "leisure") {
-            match v.as_str() {
+        else if let Some(v) = get_tag("leisure") {
+            match v {
                 "swimming_pool" => MapElement {
                     id: way_data.id,
                     vertices: vertices.clone(),
@@ -269,8 +297,8 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
             }
         }
         // Controlla le strade
-        else if let Some((_, v)) = way_data.tags.iter().find(|(k, _)| k == "highway") {
-            match v.as_str() {
+        else if let Some(v) = get_tag("highway") {
+            match v {
                 "motorway" | "trunk" | "primary" => MapElement {
                     id: way_data.id,
                     vertices: vertices.clone(),
@@ -287,7 +315,17 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
                     id: way_data.id,
                     vertices: vertices.clone(),
                     inner_rings: Vec::new(),
-                    element_type: ElementType::StradaLocale,
+                    element_type: if has_unpaved_surface {
+                        ElementType::StradaSterrata
+                    } else {
+                        ElementType::StradaLocale
+                    },
+                },
+                "track" => MapElement {
+                    id: way_data.id,
+                    vertices: vertices.clone(),
+                    inner_rings: Vec::new(),
+                    element_type: ElementType::StradaSterrata,
                 },
                 "footway" | "path" | "cycleway" | "pedestrian" | "steps" => MapElement {
                     id: way_data.id,
@@ -299,7 +337,11 @@ pub fn converti_way(way_data: &WayData, node_index: &HashMap<i64, WorldPos>) -> 
                     id: way_data.id,
                     vertices: vertices.clone(),
                     inner_rings: Vec::new(),
-                    element_type: ElementType::StradaLocale,
+                    element_type: if has_unpaved_surface {
+                        ElementType::StradaSterrata
+                    } else {
+                        ElementType::StradaLocale
+                    },
                 },
             }
         }
