@@ -67,7 +67,7 @@ fn flick_velocity_from_history(
 }
 
 fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
-    let bbox = render_state.get_actual_bbox();
+    let bbox = render_state.get_geo_bbox();
 
     let lon_per_pixel = (bbox.max_lon - bbox.min_lon) / display_size.width as f64;
     let lat_per_pixel = (bbox.max_lat - bbox.min_lat) / display_size.height as f64;
@@ -185,13 +185,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         stackframebuffer.clear(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3));
 
-        render_state.renderizza_mappa(spawn_point, &mut stackframebuffer);
+        let primitives_drawn = render_state
+            .renderizza_mappa(spawn_point, &mut stackframebuffer)
+            .unwrap_or(0);
 
         Text::new(
             &format!(
-                "Frame time: {}ms, fps: {}",
+                "Frame time: {}ms, fps: {}\n{} primitives",
                 frame_time.as_millis(),
-                1.0 / frame_time.as_secs_f32()
+                1.0 / frame_time.as_secs_f32(),
+                primitives_drawn
             ),
             Point::new(10, 20),
             text_style,

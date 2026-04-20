@@ -74,6 +74,23 @@ fn bbox_for_viewport(centro: WorldPos, raggio_metri: f64, viewport: Size) -> Geo
     }
 }
 
+pub struct WorldBbox {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+impl WorldBbox {
+    pub fn new(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Self {
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
+    }
+}
+
 pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
     pub mesh_container: Vec<OwnedMeshData>,
@@ -136,7 +153,8 @@ impl RenderState {
         }
     }
 
-    pub fn get_actual_bbox(&self) -> GeoBBox {
+    // the bbox in geo coordinates
+    pub fn get_geo_bbox(&self) -> GeoBBox {
         let (visible_width_m, visible_height_m) =
             self.visible_meters_for_viewport(self.viewport_size);
         let radius_m = visible_width_m.min(visible_height_m) * 0.5;
@@ -145,7 +163,8 @@ impl RenderState {
     }
 
     /// computes camera x y from the current center and the viewport
-    pub fn get_camera_position(&self) -> (f32, f32) {
+    /// so the center in world units
+    pub fn get_world_center(&self) -> (f32, f32) {
         let (north_m, east_m) = self.spawn_point.offset_in_meters(self.current_center);
         let camera_x = (east_m * MAP_SCALE_FACTOR as f64) as f32;
         let camera_y = (north_m * MAP_SCALE_FACTOR as f64) as f32;
@@ -153,8 +172,32 @@ impl RenderState {
         (camera_x, camera_y)
     }
 
+    /// Returns the visible bbox on the `z = 0` map plane in renderer world
+    /// coordinates as `(min_x, min_y, max_x, max_y)`.
+    pub fn get_world_bbox(&self) -> WorldBbox {
+        let (center_x, center_y) = self.get_world_center();
+        let aspect_ratio = if self.viewport_size.height == 0 {
+            1.0
+        } else {
+            self.viewport_size.width as f32 / self.viewport_size.height as f32
+        }
+        .max(f32::EPSILON);
+
+        let visible_height = self.visible_world_height_at_z0() as f32;
+        let visible_width = visible_height * aspect_ratio;
+        let half_width = visible_width * 0.5;
+        let half_height = visible_height * 0.5;
+
+        WorldBbox::new(
+            center_x - half_width,
+            center_y - half_height,
+            center_x + half_width,
+            center_y + half_height,
+        )
+    }
+
     pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let load_bbox = self.expanded_bbox_for_loading(&self.get_actual_bbox(), self.viewport_size);
+        let load_bbox = self.expanded_bbox_for_loading(&self.get_geo_bbox(), self.viewport_size);
 
         let cfg = ChunkConfig {
             chunk_size_m: 2000.0,
@@ -228,7 +271,7 @@ impl RenderState {
         &self,
         _coordinates: WorldPos,
         framebuffer: &mut D,
-    ) -> Result<(), DrawError> {
+    ) -> Result<usize, DrawError> {
         // Crea l'engine 3D
         let mut engine = K3dengine::new(framebuffer.limit().x as u16, framebuffer.limit().y as u16);
 
@@ -240,7 +283,7 @@ impl RenderState {
 
         // Posiziona la camera più vicina per zoomare sulla mappa
         // Distanza più piccola = zoom maggiore
-        let (camera_x, camera_y) = self.get_camera_position();
+        let (camera_x, camera_y) = self.get_world_center();
         engine
             .camera
             .set_position(Point3::new(camera_x, camera_y, CAMERA_DISTANCE));
@@ -256,7 +299,7 @@ impl RenderState {
         // L'API si aspetta IntoIterator<Item = &K3dMesh>, quindi passiamo &meshes
         let mut primitive_count = 0;
 
-        let current_bbox = self.get_actual_bbox();
+        let current_bbox = self.get_geo_bbox();
 
         let meshes = self
             .mesh_container
@@ -272,9 +315,8 @@ impl RenderState {
                 error!("Error drawing primitive: {:?} {:?}", p, e);
             }*/
         });
-        info!("Renderizzati {} primitivi", primitive_count);
 
-        Ok(())
+        Ok(primitive_count)
     }
 }
 
