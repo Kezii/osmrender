@@ -67,10 +67,10 @@ fn flick_velocity_from_history(
 }
 
 fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
-    let lon_per_pixel =
-        (render_state.bbox.max_lon - render_state.bbox.min_lon) / display_size.width as f64;
-    let lat_per_pixel =
-        (render_state.bbox.max_lat - render_state.bbox.min_lat) / display_size.height as f64;
+    let bbox = render_state.get_actual_bbox();
+
+    let lon_per_pixel = (bbox.max_lon - bbox.min_lon) / display_size.width as f64;
+    let lat_per_pixel = (bbox.max_lat - bbox.min_lat) / display_size.height as f64;
 
     (lat_per_pixel, lon_per_pixel)
 }
@@ -96,8 +96,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunks: Vec::new(),
         map_elements: Vec::new(),
         mesh_container: Vec::new(),
-        bbox: GeoBBox::default(),
         load_bbox: GeoBBox::default(),
+        viewport_size: display.size(),
     };
 
     let mut click_down_point: Option<Point> = None;
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.set_bbox_for_viewport(display.size());
+            render_state.set_bbox_for_viewport();
             render_state.reload_chunks()?;
             render_state.reload_map_elements()?;
             render_state.reload_mesh_container(spawn_point)?;

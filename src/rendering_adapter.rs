@@ -19,6 +19,7 @@ pub struct OwnedMeshData {
     pub color: Rgb565,
     pub render_mode: RenderMode,
     pub priority: u8,
+    pub bbox: GeoBBox,
 }
 
 impl OwnedMeshData {
@@ -33,27 +34,6 @@ impl OwnedMeshData {
         mesh.set_color(self.color);
         mesh.set_render_mode(self.render_mode.clone());
         mesh
-    }
-
-    pub fn get_bbox(&self) -> GeoBBox {
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-
-        for vertex in &self.vertices {
-            min_x = min_x.min(vertex[0]);
-            min_y = min_y.min(vertex[1]);
-            max_x = max_x.max(vertex[0]);
-            max_y = max_y.max(vertex[1]);
-        }
-
-        GeoBBox {
-            min_lat: min_y as f64,
-            max_lat: max_y as f64,
-            min_lon: min_x as f64,
-            max_lon: max_x as f64,
-        }
     }
 }
 
@@ -372,6 +352,7 @@ impl MapElement {
             color: Rgb565,
             is_solid: bool,
             priority: u8,
+            bbox: GeoBBox,
         }
 
         impl ElementData {
@@ -397,6 +378,7 @@ impl MapElement {
                             RenderMode::Lines
                         },
                         priority: self.priority,
+                        bbox: self.bbox.clone(),
                     };
                     mesh_data
                 }
@@ -441,6 +423,7 @@ impl MapElement {
                     color,
                     is_solid: false,
                     priority,
+                    bbox: self.bbox().clone(),
                 });
             }
         } else {
@@ -548,6 +531,7 @@ impl MapElement {
                 color,
                 is_solid, // Potrebbe essere stato cambiato a false se la triangolazione fallisce
                 priority,
+                bbox: self.bbox().clone(),
             });
         }
 

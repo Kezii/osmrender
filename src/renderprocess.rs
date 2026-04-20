@@ -78,7 +78,7 @@ pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
     pub map_elements: Vec<MapElement>,
     pub mesh_container: Vec<OwnedMeshData>,
-    pub bbox: GeoBBox,
+    pub viewport_size: Size,
     pub load_bbox: GeoBBox,
     pub camera_fovy: f32,
     pub spawn_point: WorldPos,
@@ -138,16 +138,17 @@ impl RenderState {
         }
     }
 
-    pub fn set_bbox_for_viewport(&mut self, viewport: Size) {
-        self.bbox = self.get_actual_bbox(viewport);
-        self.load_bbox = self.expanded_bbox_for_loading(&self.bbox, viewport);
+    pub fn set_bbox_for_viewport(&mut self) {
+        self.load_bbox =
+            self.expanded_bbox_for_loading(&self.get_actual_bbox(), self.viewport_size);
     }
 
-    pub fn get_actual_bbox(&self, viewport: Size) -> GeoBBox {
-        let (visible_width_m, visible_height_m) = self.visible_meters_for_viewport(viewport);
+    pub fn get_actual_bbox(&self) -> GeoBBox {
+        let (visible_width_m, visible_height_m) =
+            self.visible_meters_for_viewport(self.viewport_size);
         let radius_m = visible_width_m.min(visible_height_m) * 0.5;
 
-        bbox_for_viewport(self.current_center, radius_m, viewport)
+        bbox_for_viewport(self.current_center, radius_m, self.viewport_size)
     }
 
     /// computes camera x y from the current center and the viewport
@@ -268,9 +269,12 @@ impl RenderState {
         // L'API si aspetta IntoIterator<Item = &K3dMesh>, quindi passiamo &meshes
         let mut primitive_count = 0;
 
+        let current_bbox = self.get_actual_bbox();
+
         let meshes = self
             .mesh_container
             .iter()
+            .filter(|mesh_data_item| current_bbox.intersects(&mesh_data_item.bbox))
             .map(|mesh_data_item| mesh_data_item.to_kmesh());
 
         engine.render(meshes, |p| {
