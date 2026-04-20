@@ -335,12 +335,118 @@ fn triangola_poligono(vertices: &[[f32; 3]]) -> Vec<[usize; 3]> {
     faces
 }
 
+fn sottrai_2d(a: [f32; 3], b: [f32; 3]) -> [f32; 2] {
+    [a[0] - b[0], a[1] - b[1]]
+}
+
+fn lunghezza_2d(v: [f32; 2]) -> f32 {
+    (v[0] * v[0] + v[1] * v[1]).sqrt()
+}
+
+fn normalizza_2d(v: [f32; 2]) -> Option<[f32; 2]> {
+    let len = lunghezza_2d(v);
+    if len <= 1e-6 {
+        None
+    } else {
+        Some([v[0] / len, v[1] / len])
+    }
+}
+
+fn normale_sinistra(direction: [f32; 2]) -> [f32; 2] {
+    [-direction[1], direction[0]]
+}
+
+/// Triangola una polilinea aperta in una mesh solida con spessore costante.
+/// Ogni nodo genera una coppia di vertici left/right e le giunzioni usano una
+/// miter join limitata per evitare picchi eccessivi sugli angoli stretti.
+fn triangola_linea(centerline: &[[f32; 3]], width: f32) -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
+    if centerline.len() < 2 || width <= 0.0 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let half_width = width * 0.5;
+    let mut segment_dirs = Vec::with_capacity(centerline.len().saturating_sub(1));
+    let mut segment_normals = Vec::with_capacity(centerline.len().saturating_sub(1));
+
+    for segment in centerline.windows(2) {
+        let delta = sottrai_2d(segment[1], segment[0]);
+        let Some(dir) = normalizza_2d(delta) else {
+            continue;
+        };
+        segment_dirs.push(dir);
+        segment_normals.push(normale_sinistra(dir));
+    }
+
+    if segment_dirs.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut expanded_vertices = Vec::with_capacity(centerline.len() * 2);
+    const MITER_LIMIT: f32 = 4.0;
+
+    for i in 0..centerline.len() {
+        let point = centerline[i];
+        let z = point[2];
+
+        let (dir, normal, miter_scale) = if i == 0 {
+            (segment_dirs[0], segment_normals[0], 1.0)
+        } else if i == centerline.len() - 1 {
+            let last = segment_dirs.len() - 1;
+            (segment_dirs[last], segment_normals[last], 1.0)
+        } else {
+            let prev_dir = segment_dirs[i - 1];
+            let next_dir = segment_dirs[i];
+            let prev_normal = segment_normals[i - 1];
+            let next_normal = segment_normals[i];
+
+            let tangent =
+                match normalizza_2d([prev_dir[0] + next_dir[0], prev_dir[1] + next_dir[1]]) {
+                    Some(tangent) => tangent,
+                    None => prev_dir,
+                };
+            let miter = normale_sinistra(tangent);
+            let denominator = miter[0] * prev_normal[0] + miter[1] * prev_normal[1];
+            let scale = if denominator.abs() <= 1e-3 {
+                1.0
+            } else {
+                (1.0 / denominator.abs()).min(MITER_LIMIT)
+            };
+
+            (tangent, miter, scale)
+        };
+
+        let mut center = [point[0], point[1]];
+        if i == 0 {
+            center[0] -= dir[0] * half_width;
+            center[1] -= dir[1] * half_width;
+        } else if i == centerline.len() - 1 {
+            center[0] += dir[0] * half_width;
+            center[1] += dir[1] * half_width;
+        }
+
+        let offset = [
+            normal[0] * half_width * miter_scale,
+            normal[1] * half_width * miter_scale,
+        ];
+
+        expanded_vertices.push([center[0] + offset[0], center[1] + offset[1], z]);
+        expanded_vertices.push([center[0] - offset[0], center[1] - offset[1], z]);
+    }
+
+    let mut faces = Vec::with_capacity((centerline.len() - 1) * 2);
+    for i in 0..centerline.len() - 1 {
+        let base = i * 2;
+        faces.push([base, base + 1, base + 2]);
+        faces.push([base + 1, base + 3, base + 2]);
+    }
+
+    (expanded_vertices, faces)
+}
+
 impl MapElement {
     /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
     /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
     pub fn converti_a_mesh(&self, params: &MapToMeshConversionParams) -> Option<OwnedMeshData> {
-        let pixel_to_world = params.scale_factor as f32;
-
         // Raccogliamo tutti i dati degli elementi
         struct ElementData {
             id: i64,
@@ -385,18 +491,20 @@ impl MapElement {
 
         let color = self.colore();
         let priority = self.priorita_rendering();
-        let coordinate = self.coordinate();
 
         // Gestisci punti (alberi, punti interesse)
         if self.is_punto() {
-            if let Some(pos) = coordinate.first() {
+            if let Some(pos) = self.vertices.first() {
                 let [x, y, z] = params.to_3d(pos, priority);
-                let (radius_pixels, n_points) = match self.element_type {
-                    ElementType::Albero => (8.0, 12),
-                    ElementType::PuntoInteresse { .. } => (3.0, 12),
-                    _ => (2.0, 10),
+
+                let radius_meters = match self.element_type {
+                    ElementType::Albero => 5.0,
+                    ElementType::PuntoInteresse { .. } => 3.0,
+                    _ => 2.0,
                 };
-                let radius = radius_pixels * pixel_to_world;
+                let radius = radius_meters * params.scale_factor as f32;
+
+                let n_points = 12;
 
                 let mut vertices = Vec::new();
                 for i in 0..n_points {
@@ -423,12 +531,12 @@ impl MapElement {
             }
         } else {
             // Gestisci linee e poligoni
-            if coordinate.len() < 2 {
+            if self.vertices.len() < 2 {
                 return None;
             }
 
             let mut vertices = Vec::new();
-            for pos in &coordinate {
+            for pos in &self.vertices {
                 // Ogni vertice ha Z basato sulla priorità
                 let vertex = params.to_3d(pos, priority);
                 vertices.push(vertex);
@@ -505,8 +613,24 @@ impl MapElement {
                     }
                 }
             } else {
-                for i in 0..vertices.len() - 1 {
-                    lines.push([i, i + 1]);
+                if let Some(line_width) = self.wide_line() {
+                    let mesh_width = line_width * params.scale_factor as f32;
+                    let (triangulated_vertices, triangulated_faces) =
+                        triangola_linea(&vertices, mesh_width);
+
+                    if !triangulated_faces.is_empty() {
+                        vertices = triangulated_vertices;
+                        faces = triangulated_faces;
+                        is_solid = true;
+                    } else {
+                        for i in 0..vertices.len() - 1 {
+                            lines.push([i, i + 1]);
+                        }
+                    }
+                } else {
+                    for i in 0..vertices.len() - 1 {
+                        lines.push([i, i + 1]);
+                    }
                 }
             }
 

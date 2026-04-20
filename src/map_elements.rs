@@ -132,6 +132,17 @@ impl MapElement {
         )
     }
 
+    pub fn wide_line(&self) -> Option<f32> {
+        match self.element_type {
+            ElementType::StradaPrincipale => Some(8.0),
+            ElementType::StradaSecondaria => Some(6.0),
+            ElementType::StradaLocale => Some(4.0),
+            ElementType::StradaPedonale => Some(2.0),
+            ElementType::Ferrovia => Some(4.0),
+            _ => None,
+        }
+    }
+
     /// Restituisce true se l'elemento è una linea aperta
     pub fn is_linea_aperta(&self) -> bool {
         matches!(
@@ -152,11 +163,6 @@ impl MapElement {
             self.element_type,
             ElementType::Albero | ElementType::PuntoInteresse { .. }
         ) || matches!(self.element_type, ElementType::Altro { is_punto } if is_punto)
-    }
-
-    /// Restituisce tutte le coordinate dell'elemento come (lat, lon)
-    pub fn coordinate(&self) -> Vec<WorldPos> {
-        self.vertices.clone()
     }
 
     /// Determina il colore per l'elemento della mappa
@@ -215,16 +221,15 @@ impl MapElement {
             | ElementType::CampoSportivo => 1,
             ElementType::Acqua => 2, // Acqua sopra foreste e parchi
             ElementType::Edificio => 3,
-            ElementType::StradaPrincipale
-            | ElementType::StradaSecondaria
-            | ElementType::StradaLocale
-            | ElementType::StradaPedonale
-            | ElementType::Ferrovia
-            | ElementType::Fiume
-            | ElementType::Canale => 4,
-            ElementType::Albero | ElementType::PuntoInteresse { .. } => 5,
+            ElementType::Fiume | ElementType::Canale => 4,
+            ElementType::StradaPedonale => 5,
+            ElementType::StradaLocale => 6,
+            ElementType::StradaSecondaria => 7,
+            ElementType::StradaPrincipale => 8,
+            ElementType::Ferrovia => 9,
+            ElementType::Albero | ElementType::PuntoInteresse { .. } => 10,
             ElementType::Altro { .. } => 1,
-            ElementType::ChunkBorder => 6,
+            ElementType::ChunkBorder => 11,
         }
     }
 }

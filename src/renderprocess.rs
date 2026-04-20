@@ -200,8 +200,8 @@ impl RenderState {
         let params = MapToMeshConversionParams {
             center_offset: spawn_point,
             scale_factor: MAP_SCALE_FACTOR as f64,
-            z_base: 0.0,     // Base z per elementi con priorità 0
-            z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
+            z_base: 0.0,                        // Base z per elementi con priorità 0
+            z_spacing: 0.01 * MAP_SCALE_FACTOR, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
             force_wireframe: false,
         };
 
