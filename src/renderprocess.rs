@@ -196,10 +196,7 @@ impl RenderState {
             })
     }
 
-    pub fn map_to_mesh(
-        &mut self,
-        spawn_point: WorldPos,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn map_to_mesh(&mut self, spawn_point: WorldPos) -> Result<(), Box<dyn std::error::Error>> {
         let params = MapToMeshConversionParams {
             center_offset: spawn_point,
             scale_factor: MAP_SCALE_FACTOR as f64,

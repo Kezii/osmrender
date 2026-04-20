@@ -15,7 +15,6 @@ pub struct OwnedMeshData {
     pub vertices: Vec<[f32; 3]>,
     pub lines: Vec<[usize; 2]>,
     pub faces: Vec<[usize; 3]>,
-    pub normals: Vec<[f32; 3]>,
     pub color: Rgb565,
     pub render_mode: RenderMode,
     pub priority: u8,
@@ -29,7 +28,7 @@ impl OwnedMeshData {
             faces: &self.faces,
             colors: &[],
             lines: &self.lines,
-            normals: &self.normals,
+            normals: &[],
         });
         mesh.set_color(self.color);
         mesh.set_render_mode(self.render_mode.clone());
@@ -348,7 +347,6 @@ impl MapElement {
             vertices: Vec<[f32; 3]>,
             lines: Vec<[usize; 2]>,
             faces: Vec<[usize; 3]>,
-            normals: Vec<[f32; 3]>,
             color: Rgb565,
             is_solid: bool,
             priority: u8,
@@ -359,7 +357,7 @@ impl MapElement {
             pub fn to_owned_mesh_data(&self, params: &MapToMeshConversionParams) -> OwnedMeshData {
                 {
                     let has_faces = !self.faces.is_empty();
-                    let mesh_data = OwnedMeshData {
+                    OwnedMeshData {
                         vertices: self.vertices.clone(),
                         // Per poligoni solidi con triangoli, non mostrare le linee (usa solo il riempimento)
                         // Per altri, mostra le linee normali
@@ -369,7 +367,6 @@ impl MapElement {
                             self.lines.clone()
                         },
                         faces: self.faces.clone(),
-                        normals: self.normals.clone(),
                         color: self.color,
                         // Usa Solid per poligoni solidi con triangoli, Lines per il resto
                         render_mode: if self.is_solid && has_faces && !params.force_wireframe {
@@ -379,8 +376,7 @@ impl MapElement {
                         },
                         priority: self.priority,
                         bbox: self.bbox.clone(),
-                    };
-                    mesh_data
+                    }
                 }
             }
         }
@@ -419,7 +415,6 @@ impl MapElement {
                     vertices,
                     lines,
                     faces: Vec::new(),
-                    normals: Vec::new(),
                     color,
                     is_solid: false,
                     priority,
@@ -456,7 +451,6 @@ impl MapElement {
 
             let mut lines = Vec::new();
             let mut faces = Vec::new();
-            let mut normals = Vec::new();
 
             if is_solid {
                 // Converti gli inner_rings (buchi) da coordinate geografiche a 3D
@@ -509,12 +503,6 @@ impl MapElement {
                     if vertices.len() > 2 {
                         lines.push([vertices.len() - 1, 0]);
                     }
-                } else {
-                    // Per poligoni 2D, tutte le normali puntano verso l'alto (0, 0, 1)
-                    for _face in &faces {
-                        normals.push([0.0, 0.0, 1.0]);
-                    }
-                    // Non generare linee per poligoni solidi - useranno RenderMode::Solid
                 }
             } else {
                 for i in 0..vertices.len() - 1 {
@@ -527,7 +515,6 @@ impl MapElement {
                 vertices,
                 lines,
                 faces,
-                normals,
                 color,
                 is_solid, // Potrebbe essere stato cambiato a false se la triangolazione fallisce
                 priority,
