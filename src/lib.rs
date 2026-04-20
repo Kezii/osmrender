@@ -23,6 +23,16 @@ impl WorldPos {
     pub fn lon(&self) -> f64 {
         self.1
     }
+
+    pub fn offset_in_meters(self, other: WorldPos) -> (f64, f64) {
+        let d_lat_deg = other.lat() - self.lat();
+        let d_lon_deg = other.lon() - self.lon();
+
+        let north_m = d_lat_deg * 111_000.0;
+        let east_m = d_lon_deg * 111_000.0 * self.lat().to_radians().cos();
+
+        (north_m, east_m)
+    }
 }
 
 impl std::ops::Add for WorldPos {

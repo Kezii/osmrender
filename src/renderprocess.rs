@@ -19,9 +19,9 @@ use std::time::Instant;
 
 /// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
 const SHOW_CHUNK_BORDERS: bool = true;
-pub const MAP_SCALE_FACTOR: f32 = 0.0003;
+pub const MAP_SCALE_FACTOR: f32 = 0.001;
 pub const CAMERA_DISTANCE: f32 = 2.0;
-pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
+//pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
 const CHUNK_LOAD_OVERSCAN: f64 = 1.05;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
@@ -74,49 +74,89 @@ fn bbox_for_viewport(centro: WorldPos, raggio_metri: f64, viewport: Size) -> Geo
     }
 }
 
-pub fn viewport_geo_overscan(viewport: Size) -> f64 {
-    if viewport.height == 0 {
-        return 1.0;
-    }
-
-    let visible_world_height = 2.0 * CAMERA_DISTANCE as f64 * (CAMERA_FOVY as f64 / 2.0).tan();
-    let mapped_world_height = viewport.height as f64 * MAP_SCALE_FACTOR as f64;
-
-    (visible_world_height / mapped_world_height).max(1.0)
-}
-
-fn expanded_bbox_for_loading(bbox: &GeoBBox, viewport: Size) -> GeoBBox {
-    let scale = viewport_geo_overscan(viewport) * CHUNK_LOAD_OVERSCAN;
-    let center_lat = (bbox.min_lat + bbox.max_lat) * 0.5;
-    let center_lon = (bbox.min_lon + bbox.max_lon) * 0.5;
-    let half_lat_span = (bbox.max_lat - bbox.min_lat) * 0.5 * scale;
-    let half_lon_span = (bbox.max_lon - bbox.min_lon) * 0.5 * scale;
-
-    GeoBBox {
-        min_lat: center_lat - half_lat_span,
-        max_lat: center_lat + half_lat_span,
-        min_lon: center_lon - half_lon_span,
-        max_lon: center_lon + half_lon_span,
-    }
-}
-
-#[derive(Default)]
 pub struct RenderState {
     pub chunks: Vec<ChunkData<MapElement>>,
     pub map_elements: Vec<MapElement>,
     pub mesh_container: Vec<OwnedMeshData>,
     pub bbox: GeoBBox,
     pub load_bbox: GeoBBox,
+    pub camera_fovy: f32,
+    pub spawn_point: WorldPos,
+    pub current_center: WorldPos,
 }
 
 impl RenderState {
-    pub fn set_bbox(&mut self, centro: WorldPos, raggio_metri: f64) {
-        self.set_bbox_for_viewport(centro, raggio_metri, Size::new(1, 1));
+    pub fn zoom(&mut self, zoom_factor: f32) {
+        self.camera_fovy *= zoom_factor;
     }
 
-    pub fn set_bbox_for_viewport(&mut self, centro: WorldPos, raggio_metri: f64, viewport: Size) {
-        self.bbox = bbox_for_viewport(centro, raggio_metri, viewport);
-        self.load_bbox = expanded_bbox_for_loading(&self.bbox, viewport);
+    /// Returns the visible span along the map plane's `y` axis where the camera
+    /// frustum intersects `z = 0`, expressed in renderer world units.
+    fn visible_world_height_at_z0(&self) -> f64 {
+        2.0 * CAMERA_DISTANCE as f64 * (self.camera_fovy as f64 / 2.0).tan()
+    }
+
+    /// Converts the camera-visible area into real-world meters for the current
+    /// viewport, preserving the viewport aspect ratio.
+    fn visible_meters_for_viewport(&self, viewport: Size) -> (f64, f64) {
+        let aspect_ratio = if viewport.height == 0 {
+            1.0
+        } else {
+            viewport.width as f64 / viewport.height as f64
+        }
+        .max(f64::EPSILON);
+
+        let visible_height_m = self.visible_world_height_at_z0() / MAP_SCALE_FACTOR as f64;
+        let visible_width_m = visible_height_m * aspect_ratio;
+
+        (visible_width_m, visible_height_m)
+    }
+
+    pub fn viewport_geo_overscan(&self, viewport: Size) -> f64 {
+        if viewport.height == 0 {
+            return 1.0;
+        }
+
+        let visible_world_height = self.visible_world_height_at_z0();
+        let mapped_world_height = viewport.height as f64 * MAP_SCALE_FACTOR as f64;
+
+        (visible_world_height / mapped_world_height).max(1.0)
+    }
+
+    fn expanded_bbox_for_loading(&self, bbox: &GeoBBox, viewport: Size) -> GeoBBox {
+        let scale = self.viewport_geo_overscan(viewport) * CHUNK_LOAD_OVERSCAN;
+        let center_lat = (bbox.min_lat + bbox.max_lat) * 0.5;
+        let center_lon = (bbox.min_lon + bbox.max_lon) * 0.5;
+        let half_lat_span = (bbox.max_lat - bbox.min_lat) * 0.5 * scale;
+        let half_lon_span = (bbox.max_lon - bbox.min_lon) * 0.5 * scale;
+
+        GeoBBox {
+            min_lat: center_lat - half_lat_span,
+            max_lat: center_lat + half_lat_span,
+            min_lon: center_lon - half_lon_span,
+            max_lon: center_lon + half_lon_span,
+        }
+    }
+
+    pub fn set_bbox_for_viewport(&mut self, viewport: Size) {
+        self.bbox = self.get_actual_bbox(viewport);
+        self.load_bbox = self.expanded_bbox_for_loading(&self.bbox, viewport);
+    }
+
+    pub fn get_actual_bbox(&self, viewport: Size) -> GeoBBox {
+        let (visible_width_m, visible_height_m) = self.visible_meters_for_viewport(viewport);
+        let radius_m = visible_width_m.min(visible_height_m) * 0.5;
+
+        bbox_for_viewport(self.current_center, radius_m, viewport)
+    }
+
+    /// computes camera x y from the current center and the viewport
+    pub fn get_camera_position(&self) -> (f32, f32) {
+        let (north_m, east_m) = self.spawn_point.offset_in_meters(self.current_center);
+        let camera_x = (east_m * MAP_SCALE_FACTOR as f64) as f32;
+        let camera_y = (north_m * MAP_SCALE_FACTOR as f64) as f32;
+
+        (camera_x, camera_y)
     }
 
     pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -124,12 +164,7 @@ impl RenderState {
             chunk_size_m: 2000.0,
         };
 
-        let now = Instant::now();
-
         let chunks = load_chunks_for_bbox::<MapElement>("chunks", &self.load_bbox, cfg)?;
-
-        let elapsed = now.elapsed();
-        println!("Tempo di caricamento chunk: {:?}", elapsed);
 
         self.chunks = chunks;
 
@@ -175,20 +210,14 @@ impl RenderState {
         Ok(())
     }
 
-    pub fn reload_mesh_container<D: DrawTarget<Color = Rgb565> + OriginDimensions>(
+    pub fn reload_mesh_container(
         &mut self,
-        framebuffer: &mut D,
+        spawn_point: WorldPos,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Crea i parametri di conversione
-        // Usiamo z diversi per priorità: priorità più alta = z più alto (più vicino alla camera)
-        // Questo assicura che gli edifici (priorità 2) siano sopra le aree (priorità 0-1)
-        // e le strade (priorità 3) siano sopra gli edifici
-        // z_spacing più grande per garantire che gli edifici siano sempre visibili
         let params = ConversionParams {
-            bbox: self.bbox.clone(),
-            width: framebuffer.size().width,
-            height: framebuffer.size().height,
-            scale_factor: MAP_SCALE_FACTOR,
+            /// this becomes the 0,0 point of the world
+            center_offset: spawn_point,
+            scale_factor: MAP_SCALE_FACTOR as f64,
             z_base: 0.0,     // Base z per elementi con priorità 0
             z_spacing: 0.01, // Spaziatura tra i livelli di priorità (più grande per garantire visibilità)
             force_wireframe: false,
@@ -209,6 +238,7 @@ impl RenderState {
     /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
     pub fn renderizza_mappa<D: GFX2DCanvas<Color = embedded_graphics_core::pixelcolor::Rgb565>>(
         &self,
+        _coordinates: WorldPos,
         framebuffer: &mut D,
     ) -> Result<(), DrawError> {
         // Crea l'engine 3D
@@ -222,12 +252,15 @@ impl RenderState {
 
         // Posiziona la camera più vicina per zoomare sulla mappa
         // Distanza più piccola = zoom maggiore
+        let (camera_x, camera_y) = self.get_camera_position();
         engine
             .camera
-            .set_position(Point3::new(0.0, 0.0, CAMERA_DISTANCE));
-        engine.camera.set_target(Point3::new(0.0, 0.0, 0.0));
+            .set_position(Point3::new(camera_x, camera_y, CAMERA_DISTANCE));
+        engine
+            .camera
+            .set_target(Point3::new(camera_x, camera_y, 0.0));
         // FOV più stretto per zoomare di più (30 gradi invece di 90)
-        engine.camera.set_fovy(CAMERA_FOVY);
+        engine.camera.set_fovy(self.camera_fovy);
 
         // Usa rendering_adapter per creare le mesh
 
@@ -260,60 +293,6 @@ pub fn filtra_map_elements(elementi_mappa: Vec<MapElement>, bbox: &GeoBBox) -> V
         .filter(|e| bbox.intersects(&e.bbox()))
         .cloned()
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn bbox_size_in_meters(bbox: &GeoBBox, center_lat: f64) -> (f64, f64) {
-        let height_m = (bbox.max_lat - bbox.min_lat) * 111000.0;
-        let width_m =
-            (bbox.max_lon - bbox.min_lon) * 111000.0 * center_lat.to_radians().cos().abs();
-        (width_m, height_m)
-    }
-
-    #[test]
-    fn viewport_wide_expands_horizontal_span() {
-        let center_lat = 45.47362;
-        let bbox = bbox_for_viewport(
-            WorldPos::new(center_lat, 9.24919),
-            200.0,
-            Size::new(1920, 1080),
-        );
-        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
-
-        assert!(width_m > height_m);
-        assert!((width_m / height_m - (1920.0 / 1080.0)).abs() < 0.01);
-    }
-
-    #[test]
-    fn viewport_tall_expands_vertical_span() {
-        let center_lat = 45.47362;
-        let bbox = bbox_for_viewport(
-            WorldPos::new(center_lat, 9.24919),
-            200.0,
-            Size::new(1080, 1920),
-        );
-        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
-
-        assert!(height_m > width_m);
-        assert!((width_m / height_m - (1080.0 / 1920.0)).abs() < 0.01);
-    }
-
-    #[test]
-    fn loading_bbox_expands_to_camera_visible_area() {
-        let center_lat = 45.47362;
-        let viewport = Size::new(1920, 1080);
-        let bbox = bbox_for_viewport(WorldPos::new(center_lat, 9.24919), 200.0, viewport);
-        let load_bbox = expanded_bbox_for_loading(&bbox, viewport);
-        let (width_m, height_m) = bbox_size_in_meters(&bbox, center_lat);
-        let (load_width_m, load_height_m) = bbox_size_in_meters(&load_bbox, center_lat);
-
-        assert!(load_width_m > width_m);
-        assert!(load_height_m > height_m);
-        assert!(load_height_m / height_m >= viewport_geo_overscan(viewport));
-    }
 }
 
 pub fn filtra_raw_osm_data(

@@ -13,10 +13,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{
-    WorldPos,
-    renderprocess::{RenderState, viewport_geo_overscan},
-};
+use osmrender::{WorldPos, chunk_manager::GeoBBox, renderprocess::RenderState};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -70,13 +67,10 @@ fn flick_velocity_from_history(
 }
 
 fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
-    let pan_scale = viewport_geo_overscan(display_size);
-    let lon_per_pixel = ((render_state.bbox.max_lon - render_state.bbox.min_lon)
-        / display_size.width as f64)
-        * pan_scale;
-    let lat_per_pixel = ((render_state.bbox.max_lat - render_state.bbox.min_lat)
-        / display_size.height as f64)
-        * pan_scale;
+    let lon_per_pixel =
+        (render_state.bbox.max_lon - render_state.bbox.min_lon) / display_size.width as f64;
+    let lat_per_pixel =
+        (render_state.bbox.max_lat - render_state.bbox.min_lat) / display_size.height as f64;
 
     (lat_per_pixel, lon_per_pixel)
 }
@@ -89,13 +83,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stackframebuffer = StackFramebuffer::<1920, 1080, Rgb565>::new(Rgb565::BLACK);
 
-    let mut centro = WorldPos::new(45.47362, 9.24919);
-    let mut raggio_metri = 200.0;
+    let spawn_point = WorldPos::new(45.47362, 9.24919);
     let mut should_reload = true;
 
-    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    let mut text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    text_style.background_color = Some(Rgb565::BLACK);
 
-    let mut render_state = RenderState::default();
+    let mut render_state = RenderState {
+        spawn_point,
+        current_center: spawn_point,
+        camera_fovy: 0.64,
+        chunks: Vec::new(),
+        map_elements: Vec::new(),
+        mesh_container: Vec::new(),
+        bbox: GeoBBox::default(),
+        load_bbox: GeoBBox::default(),
+    };
 
     let mut click_down_point: Option<Point> = None;
     let mut previous_frame_point: VecDeque<Point> = VecDeque::new();
@@ -111,10 +114,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.set_bbox_for_viewport(centro, raggio_metri, display.size());
+            render_state.set_bbox_for_viewport(display.size());
             render_state.reload_chunks()?;
             render_state.reload_map_elements()?;
-            render_state.reload_mesh_container(&mut display)?;
+            render_state.reload_mesh_container(spawn_point)?;
             should_reload = false;
         }
 
@@ -129,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 },
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
-                    raggio_metri -= (raggio_metri / 10.0) * scroll_delta.y as f64;
+                    render_state.zoom(1.0 - scroll_delta.y as f32 * 0.1);
                     should_reload = true;
                     center_speed = None;
                 }
@@ -158,12 +161,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Durante il pan il punto sotto al cursore deve restare lo stesso,
                         // quindi il centro si muove in senso opposto al delta del mouse.
                         // Il fattore di pan include la porzione realmente visibile tramite camera.
-                        centro += WorldPos::new(
+                        render_state.current_center += WorldPos::new(
                             delta.y as f64 * lat_per_pixel,
                             -delta.x as f64 * lon_per_pixel,
                         );
                         click_down_point = Some(point);
-                        should_reload = true;
                         center_speed = None;
                         push_mouse_history(&mut previous_frame_point, point);
                     }
@@ -176,19 +178,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let display_size = display.size();
             let (lat_per_pixel, lon_per_pixel) = geo_delta_per_pixel(&render_state, display_size);
 
-            centro += WorldPos::new(
+            render_state.current_center += WorldPos::new(
                 current_speed.y * lat_per_pixel,
                 -current_speed.x * lon_per_pixel,
             );
 
-            should_reload = true;
             info!("inertia {:?}", current_speed);
             center_speed = current_speed.apply_friction(frame_time_secs);
         }
 
         stackframebuffer.clear(Rgb565::BLACK);
 
-        render_state.renderizza_mappa(&mut stackframebuffer);
+        render_state.renderizza_mappa(spawn_point, &mut stackframebuffer);
 
         Text::new(
             &format!(

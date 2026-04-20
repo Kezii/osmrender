@@ -59,13 +59,10 @@ impl OwnedMeshData {
 
 /// Parametri per la conversione da coordinate geografiche a coordinate 3D
 pub struct ConversionParams {
-    /// Bounds geografici
-    pub bbox: GeoBBox,
-    /// Dimensioni dell'immagine
-    pub width: u32,
-    pub height: u32,
+    /// dove piazziamo il centro del mondo
+    pub center_offset: WorldPos,
     /// Fattore di scala per le coordinate world space
-    pub scale_factor: f32,
+    pub scale_factor: f64,
     /// Offset Z per la priorità più bassa (elementi che stanno sotto)
     pub z_base: f32,
     /// Spaziatura tra i livelli di priorità in Z
@@ -78,21 +75,15 @@ impl ConversionParams {
     /// Converte coordinate geografiche a coordinate 3D world space
     /// priority: priorità di rendering (0 = più bassa, sotto tutto)
     fn to_3d(&self, pos: &WorldPos, priority: u8) -> [f32; 3] {
-        let center_x = self.width as f32 / 2.0;
-        let center_y = self.height as f32 / 2.0;
+        let (north_m, east_m) = self.center_offset.offset_in_meters(*pos);
 
-        let x = ((pos.lon() - self.bbox.min_lon) / (self.bbox.max_lon - self.bbox.min_lon)
-            * self.width as f64) as f32;
-        let y = ((pos.lat() - self.bbox.min_lat) / (self.bbox.max_lat - self.bbox.min_lat)
-            * self.height as f64) as f32;
-
-        let x_world = (x - center_x) * self.scale_factor;
-        let y_world = (y - center_y) * self.scale_factor;
+        let x_world = east_m * self.scale_factor;
+        let y_world = north_m * self.scale_factor;
 
         // Z basato sulla priorità: priorità più alta = Z più alto (più vicino alla camera)
         let z = self.z_base + (priority as f32 * self.z_spacing);
 
-        [x_world, y_world, z]
+        [x_world as f32, y_world as f32, z]
     }
 }
 
@@ -369,7 +360,7 @@ impl MapElement {
     /// Converte un array di MapElement in un array ordinato di mesh pronte per il rendering
     /// Usa la coordinata Z per gestire le occlusioni in base alla priorità
     pub fn converti_a_mesh(&self, params: &ConversionParams) -> Option<OwnedMeshData> {
-        let pixel_to_world = params.scale_factor;
+        let pixel_to_world = params.scale_factor as f32;
 
         // Raccogliamo tutti i dati degli elementi
         struct ElementData {
