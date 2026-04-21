@@ -67,10 +67,8 @@ fn bbox_for_viewport(centro: GeoPos, raggio_metri: f64, viewport: Size) -> GeoBB
     let lon_delta = half_width_m / meters_per_lon_degree;
 
     GeoBBox {
-        min_lat: centro.lat() - lat_delta,
-        max_lat: centro.lat() + lat_delta,
-        min_lon: centro.lon() - lon_delta,
-        max_lon: centro.lon() + lon_delta,
+        min: GeoPos::new(centro.lat() - lat_delta, centro.lon() - lon_delta),
+        max: GeoPos::new(centro.lat() + lat_delta, centro.lon() + lon_delta),
     }
 }
 
@@ -140,16 +138,14 @@ impl RenderState {
 
     fn expanded_bbox_for_loading(&self, bbox: &GeoBBox, viewport: Size) -> GeoBBox {
         let scale = self.viewport_geo_overscan(viewport) * CHUNK_LOAD_OVERSCAN;
-        let center_lat = (bbox.min_lat + bbox.max_lat) * 0.5;
-        let center_lon = (bbox.min_lon + bbox.max_lon) * 0.5;
-        let half_lat_span = (bbox.max_lat - bbox.min_lat) * 0.5 * scale;
-        let half_lon_span = (bbox.max_lon - bbox.min_lon) * 0.5 * scale;
+        let center_lat = (bbox.min.lat() + bbox.max.lat()) * 0.5;
+        let center_lon = (bbox.min.lon() + bbox.max.lon()) * 0.5;
+        let half_lat_span = (bbox.max.lat() - bbox.min.lat()) * 0.5 * scale;
+        let half_lon_span = (bbox.max.lon() - bbox.min.lon()) * 0.5 * scale;
 
         GeoBBox {
-            min_lat: center_lat - half_lat_span,
-            max_lat: center_lat + half_lat_span,
-            min_lon: center_lon - half_lon_span,
-            max_lon: center_lon + half_lon_span,
+            min: GeoPos::new(center_lat - half_lat_span, center_lon - half_lon_span),
+            max: GeoPos::new(center_lat + half_lat_span, center_lon + half_lon_span),
         }
     }
 
@@ -224,11 +220,11 @@ impl RenderState {
             .enumerate()
             .map(|(i, cb)| {
                 let verts = vec![
-                    GeoPos::new(cb.min_lat, cb.min_lon),
-                    GeoPos::new(cb.min_lat, cb.max_lon),
-                    GeoPos::new(cb.max_lat, cb.max_lon),
-                    GeoPos::new(cb.max_lat, cb.min_lon),
-                    GeoPos::new(cb.min_lat, cb.min_lon),
+                    GeoPos::new(cb.min.lat(), cb.min.lon()),
+                    GeoPos::new(cb.min.lat(), cb.max.lon()),
+                    GeoPos::new(cb.max.lat(), cb.max.lon()),
+                    GeoPos::new(cb.max.lat(), cb.min.lon()),
+                    GeoPos::new(cb.min.lat(), cb.min.lon()),
                 ];
                 MapElement {
                     id: -1 - (i as i64),

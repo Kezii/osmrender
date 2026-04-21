@@ -26,27 +26,31 @@ impl MapElement {
             !self.vertices.is_empty(),
             "MapElement::bbox() requires at least one vertex"
         );
+
+        let min_lat = self
+            .vertices
+            .iter()
+            .map(|pos| pos.lat())
+            .fold(f64::INFINITY, f64::min);
+        let max_lat = self
+            .vertices
+            .iter()
+            .map(|pos| pos.lat())
+            .fold(f64::NEG_INFINITY, f64::max);
+        let min_lon = self
+            .vertices
+            .iter()
+            .map(|pos| pos.lon())
+            .fold(f64::INFINITY, f64::min);
+        let max_lon = self
+            .vertices
+            .iter()
+            .map(|pos| pos.lon())
+            .fold(f64::NEG_INFINITY, f64::max);
+
         GeoBBox {
-            min_lat: self
-                .vertices
-                .iter()
-                .map(|pos| pos.lat())
-                .fold(f64::INFINITY, f64::min),
-            max_lat: self
-                .vertices
-                .iter()
-                .map(|pos| pos.lat())
-                .fold(f64::NEG_INFINITY, f64::max),
-            min_lon: self
-                .vertices
-                .iter()
-                .map(|pos| pos.lon())
-                .fold(f64::INFINITY, f64::min),
-            max_lon: self
-                .vertices
-                .iter()
-                .map(|pos| pos.lon())
-                .fold(f64::NEG_INFINITY, f64::max),
+            min: GeoPos::new(min_lat, min_lon),
+            max: GeoPos::new(max_lat, max_lon),
         }
     }
 }

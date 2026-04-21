@@ -77,15 +77,10 @@ impl BBox {
         {
             return None;
         }
-        Some(
-            GeoBBox {
-                min_lat: self.min_lat,
-                max_lat: self.max_lat,
-                min_lon: self.min_lon,
-                max_lon: self.max_lon,
-            }
-            .normalized(),
-        )
+        Some(GeoBBox {
+            min: GeoPos::new(self.min_lat, self.min_lon),
+            max: GeoPos::new(self.max_lat, self.max_lon),
+        })
     }
 }
 
@@ -148,10 +143,8 @@ pub fn build_spatial_index(
 
     spatial.par_extend(nodes.into_par_iter().map(|n| PositionedPrimitive {
         bbox: GeoBBox {
-            min_lat: n.pos.lat(),
-            max_lat: n.pos.lat(),
-            min_lon: n.pos.lon(),
-            max_lon: n.pos.lon(),
+            min: GeoPos::new(n.pos.lat(), n.pos.lon()),
+            max: GeoPos::new(n.pos.lat(), n.pos.lon()),
         },
         primitive: OsmPrimitive::Node(SpatialNodeData {
             id: n.id,

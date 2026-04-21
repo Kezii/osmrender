@@ -69,8 +69,8 @@ fn flick_velocity_from_history(
 fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
     let bbox = render_state.get_geo_bbox();
 
-    let lon_per_pixel = (bbox.max_lon - bbox.min_lon) / display_size.width as f64;
-    let lat_per_pixel = (bbox.max_lat - bbox.min_lat) / display_size.height as f64;
+    let lon_per_pixel = (bbox.max.lon() - bbox.min.lon()) / display_size.width as f64;
+    let lat_per_pixel = (bbox.max.lat() - bbox.min.lat()) / display_size.height as f64;
 
     (lat_per_pixel, lon_per_pixel)
 }

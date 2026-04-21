@@ -7,7 +7,14 @@ pub mod rendering_adapter;
 pub mod renderprocess;
 pub mod spatial_index;
 
-#[derive(Clone, PartialEq, Debug, bincode::Encode, bincode::Decode, Copy)]
+// ---------------------------
+// WebMercator helpers
+// ---------------------------
+
+const EARTH_RADIUS_M: f64 = 6_378_137.0;
+const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
+
+#[derive(Clone, PartialEq, Debug, bincode::Encode, bincode::Decode, Copy, Default)]
 
 pub struct GeoPos(f64, f64);
 
@@ -32,6 +39,23 @@ impl GeoPos {
         let east_m = d_lon_deg * 111_000.0 * self.lat().to_radians().cos();
 
         (north_m, east_m)
+    }
+
+    pub fn to_webmercator(self) -> (f64, f64) {
+        let x = EARTH_RADIUS_M * self.lon().to_radians();
+        let lat = self
+            .lat()
+            .clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT)
+            .to_radians();
+        let y = EARTH_RADIUS_M * (std::f64::consts::FRAC_PI_4 + lat * 0.5).tan().ln();
+
+        (x, y)
+    }
+
+    pub fn from_webmercator(x: f64, y: f64) -> Self {
+        let lon = (x / EARTH_RADIUS_M).to_degrees();
+        let lat = 2.0 * (y / EARTH_RADIUS_M).exp().atan() - std::f64::consts::FRAC_PI_2;
+        Self::new(lat.to_degrees(), lon)
     }
 }
 
