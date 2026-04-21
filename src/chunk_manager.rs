@@ -1,50 +1,10 @@
-use crate::GeoPos;
 use crate::spatial_index::PositionedPrimitive;
+use crate::{GeoBBox, GeoPos};
 use log::info;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-
-/// Bounding box geografica (lat/lon).
-#[derive(Default, Debug, Clone, bincode::Encode, bincode::Decode)]
-pub struct GeoBBox {
-    pub min: GeoPos,
-    pub max: GeoPos,
-}
-
-impl GeoBBox {
-    pub fn normalized(self) -> Self {
-        let min_lat = self.min.lat().min(self.max.lat());
-        let max_lat = self.min.lat().max(self.max.lat());
-        let min_lon = self.min.lon().min(self.max.lon());
-        let max_lon = self.min.lon().max(self.max.lon());
-
-        Self {
-            min: GeoPos::new(min_lat, min_lon),
-            max: GeoPos::new(max_lat, max_lon),
-        }
-    }
-
-    #[inline]
-    pub fn contains(&self, pos: GeoPos) -> bool {
-        pos.lat() >= self.min.lat()
-            && pos.lat() <= self.max.lat()
-            && pos.lon() >= self.min.lon()
-            && pos.lon() <= self.max.lon()
-    }
-
-    #[inline]
-    pub fn intersects(&self, other: &GeoBBox) -> bool {
-        // Assumiamo bbox normalizzate; per sicurezza normalizziamo localmente.
-        let a = (*self).clone().normalized();
-        let b = other.clone().normalized();
-        !(a.max.lat() < b.min.lat()
-            || a.min.lat() > b.max.lat()
-            || a.max.lon() < b.min.lon()
-            || a.min.lon() > b.max.lon())
-    }
-}
 
 /// Config dei chunk.
 ///

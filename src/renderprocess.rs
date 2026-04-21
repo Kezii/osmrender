@@ -1,21 +1,14 @@
-use crate::GeoPos;
-use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBox, load_chunks_for_bbox};
-use crate::imageframebuffer::ImageFramebuffer;
+use crate::chunk_manager::{ChunkConfig, ChunkData, load_chunks_for_bbox};
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
 use crate::rendering_adapter::{MapToMeshConversionParams, OwnedMeshData};
+use crate::{GeoBBox, GeoPos};
 use embedded_gfx::K3dengine;
 use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
-use embedded_gfx::mesh::K3dMesh;
-use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Size};
-use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, Window};
-use image::RgbImage;
-use log::{error, info};
+use embedded_graphics::prelude::Size;
 use nalgebra::Point3;
 use std::collections::HashSet;
-use std::time::Instant;
 
 /// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
 const SHOW_CHUNK_BORDERS: bool = true;

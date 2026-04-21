@@ -1,6 +1,6 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-use crate::{GeoPos, chunk_manager::GeoBBox};
+use crate::{GeoBBox, GeoPos};
 
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)

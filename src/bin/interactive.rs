@@ -13,7 +13,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{GeoPos, chunk_manager::GeoBBox, renderprocess::RenderState};
+use osmrender::{GeoPos, GeoBBox, renderprocess::RenderState};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;

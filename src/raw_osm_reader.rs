@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use osmpbf::{Element, ElementReader};
 use serde::{Deserialize, Serialize};
 

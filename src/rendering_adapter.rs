@@ -1,6 +1,5 @@
 use crate::{
-    GeoPos,
-    chunk_manager::GeoBBox,
+    GeoBBox, GeoPos,
     map_elements::{ElementType, MapElement},
 };
 use earcut::Earcut;

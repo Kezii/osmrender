@@ -4,8 +4,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    GeoPos,
-    chunk_manager::GeoBBox,
+    GeoBBox, GeoPos,
     converter::SpatialNodeData,
     raw_osm_reader::{NodeData, RelationData, RelationMemberType, WayData},
 };
