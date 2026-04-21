@@ -239,7 +239,7 @@ impl MapElement {
             ElementType::Cimitero => None,
             ElementType::CampoSportivo => Some(Rgb565::new(123 >> 3, 138 >> 2, 58 >> 3)),
             ElementType::Albero => None,
-            ElementType::PuntoInteresse { ha_nome } => None,
+            ElementType::PuntoInteresse { .. } => None,
             ElementType::Altro { is_punto } => {
                 if is_punto {
                     None

@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, time::Instant};
 
-use embedded_gfx::framebuffer::{DmaReadyFramebuffer, StackFramebuffer};
+use embedded_gfx::framebuffer::StackFramebuffer;
 use embedded_graphics::{
     Drawable,
     mono_font::{MonoTextStyle, ascii::FONT_10X20},
     pixelcolor::Rgb565,
-    prelude::{DrawTarget, OriginDimensions, PixelColor, Point, RgbColor, Size},
+    prelude::{DrawTarget, OriginDimensions, Point, RgbColor, Size},
     primitives::Rectangle,
     text::Text,
 };
@@ -13,7 +13,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{GeoPos, GeoBBox, renderprocess::RenderState};
+use osmrender::{GeoPos, renderprocess::RenderState};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -125,6 +125,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Keycode::Q => {
                         break 'running;
                     }
+
+                    Keycode::W => {}
                     _ => {}
                 },
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
@@ -186,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stackframebuffer.clear(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3));
 
         let primitives_drawn = render_state
-            .renderizza_mappa(spawn_point, &mut stackframebuffer)
+            .renderizza_mappa(&mut stackframebuffer)
             .unwrap_or(0);
 
         Text::new(

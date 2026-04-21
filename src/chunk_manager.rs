@@ -1,8 +1,6 @@
-use crate::spatial_index::PositionedPrimitive;
 use crate::{GeoBBox, GeoPos};
 use log::info;
-use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 

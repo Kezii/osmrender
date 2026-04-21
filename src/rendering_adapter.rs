@@ -396,7 +396,7 @@ fn triangola_linea(centerline: &[[f32; 3]], width: f32) -> (Vec<[f32; 3]>, Vec<[
             let prev_dir = segment_dirs[i - 1];
             let next_dir = segment_dirs[i];
             let prev_normal = segment_normals[i - 1];
-            let next_normal = segment_normals[i];
+            //let next_normal = segment_normals[i];
 
             let tangent =
                 match normalizza_2d([prev_dir[0] + next_dir[0], prev_dir[1] + next_dir[1]]) {
@@ -448,7 +448,6 @@ impl MapElement {
     pub fn converti_a_mesh(&self, params: &MapToMeshConversionParams) -> Option<OwnedMeshData> {
         // Raccogliamo tutti i dati degli elementi
         struct ElementData {
-            id: i64,
             vertices: Vec<[f32; 3]>,
             lines: Vec<[usize; 2]>,
             faces: Vec<[usize; 3]>,
@@ -518,7 +517,6 @@ impl MapElement {
                 }
 
                 element_data = Some(ElementData {
-                    id: self.id(),
                     vertices,
                     lines,
                     faces: Vec::new(),
@@ -621,7 +619,6 @@ impl MapElement {
             }
 
             element_data = Some(ElementData {
-                id: self.id(),
                 vertices,
                 lines,
                 faces,

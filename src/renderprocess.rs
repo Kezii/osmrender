@@ -7,7 +7,7 @@ use embedded_gfx::K3dengine;
 use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
 use embedded_graphics::prelude::Size;
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector2};
 use std::collections::HashSet;
 
 /// Switch per abilitare il rendering dei bordi dei chunk (overlay debug).
@@ -62,23 +62,6 @@ fn bbox_for_viewport(centro: GeoPos, raggio_metri: f64, viewport: Size) -> GeoBB
     GeoBBox {
         min: GeoPos::new(centro.lat() - lat_delta, centro.lon() - lon_delta),
         max: GeoPos::new(centro.lat() + lat_delta, centro.lon() + lon_delta),
-    }
-}
-
-pub struct WorldBbox {
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-}
-impl WorldBbox {
-    pub fn new(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Self {
-        Self {
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-        }
     }
 }
 
@@ -163,7 +146,7 @@ impl RenderState {
 
     /// Returns the visible bbox on the `z = 0` map plane in renderer world
     /// coordinates as `(min_x, min_y, max_x, max_y)`.
-    pub fn get_world_bbox(&self) -> WorldBbox {
+    pub fn get_world_bbox(&self) -> (Vector2<f32>, Vector2<f32>) {
         let (center_x, center_y) = self.get_world_center();
         let aspect_ratio = if self.viewport_size.height == 0 {
             1.0
@@ -177,11 +160,9 @@ impl RenderState {
         let half_width = visible_width * 0.5;
         let half_height = visible_height * 0.5;
 
-        WorldBbox::new(
-            center_x - half_width,
-            center_y - half_height,
-            center_x + half_width,
-            center_y + half_height,
+        (
+            Vector2::new(center_x - half_width, center_y - half_height),
+            Vector2::new(center_x + half_width, center_y + half_height),
         )
     }
 
@@ -258,7 +239,6 @@ impl RenderState {
     /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
     pub fn renderizza_mappa<D: GFX2DCanvas<Color = embedded_graphics_core::pixelcolor::Rgb565>>(
         &self,
-        _coordinates: GeoPos,
         framebuffer: &mut D,
     ) -> Result<usize, DrawError> {
         // Crea l'engine 3D
@@ -298,7 +278,7 @@ impl RenderState {
 
         engine.render(meshes, |p| {
             primitive_count += 1;
-            let e = draw(&p, framebuffer);
+            draw(&p, framebuffer).ok();
 
             /*if let Err(e) = e {
                 error!("Error drawing primitive: {:?} {:?}", p, e);

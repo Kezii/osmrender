@@ -1,10 +1,7 @@
-use osmpbf::{Element, ElementReader};
-
 use osmrender::chunk_manager::{ChunkConfig, ChunkPrimitive, save_chunks};
 use osmrender::converter::converti_elementi_osm_posizionati;
 use osmrender::map_elements::MapElement;
 use osmrender::raw_osm_reader::read_raw_osm_file;
-use osmrender::spatial_index::{PositionedPrimitive, build_spatial_index};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
