@@ -1,4 +1,4 @@
-use crate::chunk_manager::{ChunkConfig, ChunkData, load_chunks_for_bbox};
+use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBoxable, load_chunks_for_bbox};
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
 use crate::rendering_adapter::{MapToMeshConversionParams, OwnedMeshData};
@@ -7,6 +7,7 @@ use embedded_gfx::K3dengine;
 use embedded_gfx::canvas::{DrawError, GFX2DCanvas};
 use embedded_gfx::draw::draw;
 use embedded_graphics::prelude::Size;
+use itertools::Itertools;
 use nalgebra::{Point3, Vector2};
 use std::collections::HashSet;
 
@@ -180,13 +181,6 @@ impl RenderState {
         Ok(())
     }
 
-    pub fn get_flat_map_elements(&mut self) -> impl Iterator<Item = &MapElement> {
-        self.chunks
-            .iter()
-            .flat_map(|e| e.data.iter())
-            .map(|e| &e.primitive)
-    }
-
     pub fn get_chunk_borders(&self) -> impl Iterator<Item = MapElement> {
         self.chunks
             .iter()
@@ -219,7 +213,10 @@ impl RenderState {
         };
 
         let mut mesh_container: Vec<OwnedMeshData> = self
-            .get_flat_map_elements()
+            .chunks
+            .iter()
+            .flat_map(|e| e.data.iter())
+            .unique_by(|m| m.id)
             .filter_map(|e| e.converti_a_mesh(&params))
             .collect();
 

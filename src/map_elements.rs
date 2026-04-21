@@ -1,6 +1,6 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-use crate::{GeoBBox, GeoPos};
+use crate::{GeoBBox, GeoPos, chunk_manager::GeoBBoxable};
 
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)
@@ -20,8 +20,8 @@ pub struct MapElement {
     pub element_type: ElementType,
 }
 
-impl MapElement {
-    pub fn bbox(&self) -> GeoBBox {
+impl GeoBBoxable for MapElement {
+    fn bbox(&self) -> GeoBBox {
         debug_assert!(
             !self.vertices.is_empty(),
             "MapElement::bbox() requires at least one vertex"
@@ -54,6 +54,7 @@ impl MapElement {
         }
     }
 }
+
 /// Enum che rappresenta il tipo specifico dell'elemento della mappa
 #[derive(Clone, PartialEq, Debug, bincode::Encode, bincode::Decode)]
 pub enum ElementType {

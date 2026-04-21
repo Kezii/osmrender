@@ -4,6 +4,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+pub trait ChunkStore {}
+
+pub trait GeoBBoxable {
+    fn bbox(&self) -> GeoBBox;
+}
 /// Config dei chunk.
 ///
 /// Nota: usiamo una griglia su coordinate **WebMercator (EPSG:3857)** in metri,
@@ -47,10 +52,7 @@ fn chunk_id_for_lat_lon(pos: GeoPos, cfg: ChunkConfig) -> ChunkId {
     }
 }
 
-fn chunk_range_for_bbox(
-    bbox: GeoBBox,
-    cfg: ChunkConfig,
-) -> (std::ops::RangeInclusive<i32>, std::ops::RangeInclusive<i32>) {
+fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<Item = (i32, i32)> {
     let bbox = bbox.normalized();
 
     let (x1, y1) = bbox.min.to_webmercator();
@@ -61,7 +63,11 @@ fn chunk_range_for_bbox(
     let min_y = (y1.min(y2) / cfg.chunk_size_m).floor() as i32;
     let max_y = (y1.max(y2) / cfg.chunk_size_m).floor() as i32;
 
-    (min_x..=max_x, min_y..=max_y)
+    //(min_x..=max_x, min_y..=max_y)
+
+    (min_x..=max_x)
+        .flat_map(move |x| (min_y..=max_y).map(move |y| (x, y)))
+        .into_iter()
 }
 
 fn geo_bbox_for_chunk_id(id: ChunkId, cfg: ChunkConfig) -> GeoBBox {
@@ -82,34 +88,27 @@ fn geo_bbox_for_chunk_id(id: ChunkId, cfg: ChunkConfig) -> GeoBBox {
     .normalized()
 }
 
-/// Una primitive OSM associata alla sua **bounding box geografica**.
-#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
-pub struct ChunkPrimitive<T> {
-    pub bbox: GeoBBox,
-    pub primitive: T,
-}
-
 /// Salva le primitive geolocalizzate in chunk su disco.
 ///
 /// - Chunks “tipo Minecraft”: ogni primitive è assegnata ad un chunk in base al suo (lat,lon)
 ///   proiettato in WebMercator.
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
-pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug>(
-    spatial: impl IntoIterator<Item = ChunkPrimitive<T>>,
+pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug + GeoBBoxable>(
+    spatial: impl IntoIterator<Item = T>,
     dir: &str,
     cfg: ChunkConfig,
 ) -> std::io::Result<()> {
     let root = Path::new(dir);
     fs::create_dir_all(root)?;
 
-    let mut buckets: HashMap<ChunkId, Vec<ChunkPrimitive<T>>> = HashMap::new();
+    let mut buckets: HashMap<ChunkId, Vec<T>> = HashMap::new();
+
     for p in spatial {
-        let (xs, ys) = chunk_range_for_bbox(p.bbox.clone(), cfg);
-        for x in xs {
-            for y in ys.clone() {
-                let id = ChunkId { x, y };
-                buckets.entry(id).or_default().push(p.clone());
-            }
+        let chunks = chunk_range_for_bbox(p.bbox(), cfg);
+
+        for (x, y) in chunks {
+            let id = ChunkId { x, y };
+            buckets.entry(id).or_default().push(p.clone());
         }
     }
 
@@ -134,13 +133,13 @@ pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug>(
     Ok(())
 }
 
-pub struct ChunkData<T: bincode::Decode<()> + Clone> {
+pub struct ChunkData<T: bincode::Decode<()> + Clone + GeoBBoxable> {
     pub id: ChunkId,
-    pub data: Vec<ChunkPrimitive<T>>,
+    pub data: Vec<T>,
     pub cfg: ChunkConfig,
 }
 
-impl<T: bincode::Decode<()> + Clone> ChunkData<T> {
+impl<T: bincode::Decode<()> + Clone + GeoBBoxable> ChunkData<T> {
     pub fn bbox(&self) -> GeoBBox {
         geo_bbox_for_chunk_id(self.id, self.cfg)
     }
@@ -148,40 +147,37 @@ impl<T: bincode::Decode<()> + Clone> ChunkData<T> {
 
 /// Legge automaticamente tutti i chunk che intersecano `bbox` e ritorna le primitive
 /// contenute dentro `bbox` (filtrate in lat/lon).
-pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone>(
+pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone + GeoBBoxable>(
     dir: &str,
     bbox: &GeoBBox,
     cfg: ChunkConfig,
 ) -> std::io::Result<Vec<ChunkData<T>>> {
     let root = Path::new(dir);
     let bbox = bbox.clone().normalized();
-    let (xs, ys) = chunk_range_for_bbox(bbox.clone(), cfg);
+    let chunks = chunk_range_for_bbox(bbox.clone(), cfg);
 
     let mut out: Vec<ChunkData<T>> = Vec::new();
     //let mut seen: HashSet<(u8, i64)> = HashSet::new();
-    for x in xs {
-        for y in ys.clone() {
-            let id = ChunkId { x, y };
-            info!("loading chunk {:?}", id);
-            // Formato: c{size}_x{X}_y{Y}.bin
-            let new_path = root.join(chunk_file_name(id, cfg));
-            let bytes = match fs::read(&new_path) {
-                Ok(b) => b,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e),
-            };
+    for (x, y) in chunks {
+        let id = ChunkId { x, y };
+        info!("loading chunk {:?}", id);
+        // Formato: c{size}_x{X}_y{Y}.bin
+        let new_path = root.join(chunk_file_name(id, cfg));
+        let bytes = match fs::read(&new_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
 
-            let prims: Vec<ChunkPrimitive<T>> =
-                bincode::decode_from_slice(&bytes, bincode::config::standard())
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
-                    .0;
+        let prims: Vec<T> = bincode::decode_from_slice(&bytes, bincode::config::standard())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+            .0;
 
-            out.push(ChunkData {
-                id,
-                data: prims,
-                cfg,
-            });
-        }
+        out.push(ChunkData {
+            id,
+            data: prims,
+            cfg,
+        });
     }
 
     Ok(out)

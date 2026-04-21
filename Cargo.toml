@@ -18,6 +18,7 @@ bincode = { version = "2.0.1", features = ["alloc"] }
 log = "0.4.29"
 env_logger = "0.11.8"
 embedded-graphics-simulator = "0.8.0"
+itertools = { version = "0.14.0", default-features = false }
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-Clink-arg=-Wl,--no-rosegment"]

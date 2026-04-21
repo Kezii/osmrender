@@ -381,9 +381,9 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "earcut"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d565e947a723df9f069393f8c3e723cf386ff9a052443339235ae2a4d9ffee3f"
+checksum = "88459a2a8e3a514b6e6de38cf3aaa9250a894cb098f74a932db77fcc8341b6d0"
 dependencies = [
  "num-traits",
 ]
@@ -1036,6 +1036,7 @@ dependencies = [
  "embedded-graphics-simulator",
  "env_logger",
  "image",
+ "itertools",
  "log",
  "nalgebra",
  "osmpbf",
