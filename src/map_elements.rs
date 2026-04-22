@@ -1,6 +1,7 @@
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::{GeoBBox, GeoPos, chunk_manager::GeoBBoxable};
+use geo::Point;
 
 /// Struct che rappresenta tutti gli elementi della mappa da renderizzare,
 /// indipendentemente dalla loro origine OSM (nodi, ways, poligoni)
@@ -52,6 +53,12 @@ impl GeoBBoxable for MapElement {
             min: GeoPos::new(min_lat, min_lon),
             max: GeoPos::new(max_lat, max_lon),
         }
+    }
+}
+
+impl MapElement {
+    pub fn to_geo(&self) -> impl IntoIterator<Item = Point<f64>> {
+        self.vertices.iter().map(|pos| pos.to_geo())
     }
 }
 

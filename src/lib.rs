@@ -1,3 +1,5 @@
+use geo::{Point, Rect};
+
 pub mod chunk_manager;
 pub mod converter;
 pub mod imageframebuffer;
@@ -29,6 +31,10 @@ impl GeoPos {
 
     pub fn lon(&self) -> f64 {
         self.1
+    }
+
+    pub fn to_geo(&self) -> Point<f64> {
+        Point::new(self.1, self.0)
     }
 
     pub fn offset_in_meters(self, other: GeoPos) -> (f64, f64) {
@@ -113,5 +119,9 @@ impl GeoBBox {
             || a.min.lat() > b.max.lat()
             || a.max.lon() < b.min.lon()
             || a.min.lon() > b.max.lon())
+    }
+
+    pub fn to_geo_rect(&self) -> Rect<f64> {
+        Rect::new(self.min.to_geo(), self.max.to_geo())
     }
 }

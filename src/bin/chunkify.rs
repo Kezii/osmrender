@@ -24,14 +24,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Nota: per ways/relations la posizione è una "rappresentativa" (centro bbox dei nodi).
     println!("--- Fase 1b: Indicizzazione spaziale primitive OSM ---");
 
-    let elementi_mappa = converti_elementi_osm_posizionati(raw_osm);
+    let mut elementi_mappa = converti_elementi_osm_posizionati(raw_osm);
 
+    elementi_mappa.sort_by_key(|e| e.id);
     //let spatial = build_spatial_index(accumulator.nodes, accumulator.ways, accumulator.relations);
     //println!("Primitive posizionate: {}", spatial.len());
 
     println!("--- Salvataggio chunk ---");
 
-    save_chunks::<MapElement>(elementi_mappa, out_dir, cfg)?;
+    save_chunks(elementi_mappa, out_dir, cfg)?;
     println!("Done.");
 
     Ok(())

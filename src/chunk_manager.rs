@@ -1,4 +1,6 @@
+use crate::map_elements::MapElement;
 use crate::{GeoBBox, GeoPos};
+use geo::{ConvexHull, Intersects, MultiPoint};
 use log::info;
 use std::collections::HashMap;
 use std::fs;
@@ -9,6 +11,7 @@ pub trait ChunkStore {}
 pub trait GeoBBoxable {
     fn bbox(&self) -> GeoBBox;
 }
+
 /// Config dei chunk.
 ///
 /// Nota: usiamo una griglia su coordinate **WebMercator (EPSG:3857)** in metri,
@@ -33,6 +36,34 @@ pub struct ChunkId {
     y: i32,
 }
 
+impl ChunkId {
+    pub fn from_pos(pos: GeoPos, cfg: ChunkConfig) -> Self {
+        let (x, y) = pos.to_webmercator();
+        ChunkId {
+            x: (x / cfg.chunk_size_m).floor() as i32,
+            y: (y / cfg.chunk_size_m).floor() as i32,
+        }
+    }
+
+    pub fn bbox(&self, cfg: ChunkConfig) -> GeoBBox {
+        // Chunk (x,y) copre il quadrato in metri:
+        // [x*size, (x+1)*size] × [y*size, (y+1)*size] in WebMercator.
+        let x0 = self.x as f64 * cfg.chunk_size_m;
+        let x1 = (self.x as f64 + 1.0) * cfg.chunk_size_m;
+        let y0 = self.y as f64 * cfg.chunk_size_m;
+        let y1 = (self.y as f64 + 1.0) * cfg.chunk_size_m;
+
+        let point0 = GeoPos::from_webmercator(x0, y0);
+        let point1 = GeoPos::from_webmercator(x1, y1);
+
+        GeoBBox {
+            min: point0,
+            max: point1,
+        }
+        .normalized()
+    }
+}
+
 fn chunk_size_tag(cfg: ChunkConfig) -> i64 {
     cfg.chunk_size_m.round() as i64
 }
@@ -42,17 +73,7 @@ fn chunk_file_name(id: ChunkId, cfg: ChunkConfig) -> String {
     format!("c{}_x{}_y{}.bin", chunk_size_tag(cfg), id.x, id.y)
 }
 
-#[inline]
-#[allow(dead_code)]
-fn chunk_id_for_lat_lon(pos: GeoPos, cfg: ChunkConfig) -> ChunkId {
-    let (x, y) = pos.to_webmercator();
-    ChunkId {
-        x: (x / cfg.chunk_size_m).floor() as i32,
-        y: (y / cfg.chunk_size_m).floor() as i32,
-    }
-}
-
-fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<Item = (i32, i32)> {
+fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<Item = ChunkId> {
     let bbox = bbox.normalized();
 
     let (x1, y1) = bbox.min.to_webmercator();
@@ -66,26 +87,8 @@ fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<It
     //(min_x..=max_x, min_y..=max_y)
 
     (min_x..=max_x)
-        .flat_map(move |x| (min_y..=max_y).map(move |y| (x, y)))
+        .flat_map(move |x| (min_y..=max_y).map(move |y| ChunkId { x, y }))
         .into_iter()
-}
-
-fn geo_bbox_for_chunk_id(id: ChunkId, cfg: ChunkConfig) -> GeoBBox {
-    // Chunk (x,y) copre il quadrato in metri:
-    // [x*size, (x+1)*size] × [y*size, (y+1)*size] in WebMercator.
-    let x0 = id.x as f64 * cfg.chunk_size_m;
-    let x1 = (id.x as f64 + 1.0) * cfg.chunk_size_m;
-    let y0 = id.y as f64 * cfg.chunk_size_m;
-    let y1 = (id.y as f64 + 1.0) * cfg.chunk_size_m;
-
-    let point0 = GeoPos::from_webmercator(x0, y0);
-    let point1 = GeoPos::from_webmercator(x1, y1);
-
-    GeoBBox {
-        min: point0,
-        max: point1,
-    }
-    .normalized()
 }
 
 /// Salva le primitive geolocalizzate in chunk su disco.
@@ -93,22 +96,28 @@ fn geo_bbox_for_chunk_id(id: ChunkId, cfg: ChunkConfig) -> GeoBBox {
 /// - Chunks “tipo Minecraft”: ogni primitive è assegnata ad un chunk in base al suo (lat,lon)
 ///   proiettato in WebMercator.
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
-pub fn save_chunks<T: bincode::Encode + Clone + std::fmt::Debug + GeoBBoxable>(
-    spatial: impl IntoIterator<Item = T>,
+pub fn save_chunks(
+    elements: impl IntoIterator<Item = MapElement>,
     dir: &str,
     cfg: ChunkConfig,
 ) -> std::io::Result<()> {
     let root = Path::new(dir);
     fs::create_dir_all(root)?;
 
-    let mut buckets: HashMap<ChunkId, Vec<T>> = HashMap::new();
+    let mut buckets: HashMap<ChunkId, Vec<MapElement>> = HashMap::new();
 
-    for p in spatial {
+    for p in elements {
         let chunks = chunk_range_for_bbox(p.bbox(), cfg);
 
-        for (x, y) in chunks {
-            let id = ChunkId { x, y };
-            buckets.entry(id).or_default().push(p.clone());
+        let multipoint = MultiPoint::new(p.to_geo().into_iter().collect());
+        let hull = multipoint.convex_hull();
+
+        for chunk in chunks {
+            let chunk_bbox = chunk.bbox(cfg);
+
+            if chunk_bbox.to_geo_rect().intersects(&hull) {
+                buckets.entry(chunk).or_default().push(p.clone());
+            }
         }
     }
 
@@ -141,7 +150,7 @@ pub struct ChunkData<T: bincode::Decode<()> + Clone + GeoBBoxable> {
 
 impl<T: bincode::Decode<()> + Clone + GeoBBoxable> ChunkData<T> {
     pub fn bbox(&self) -> GeoBBox {
-        geo_bbox_for_chunk_id(self.id, self.cfg)
+        self.id.bbox(self.cfg)
     }
 }
 
@@ -158,11 +167,10 @@ pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone + GeoBBoxable>(
 
     let mut out: Vec<ChunkData<T>> = Vec::new();
     //let mut seen: HashSet<(u8, i64)> = HashSet::new();
-    for (x, y) in chunks {
-        let id = ChunkId { x, y };
-        info!("loading chunk {:?}", id);
+    for chunk in chunks {
+        info!("loading chunk {:?}", chunk);
         // Formato: c{size}_x{X}_y{Y}.bin
-        let new_path = root.join(chunk_file_name(id, cfg));
+        let new_path = root.join(chunk_file_name(chunk, cfg));
         let bytes = match fs::read(&new_path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -174,7 +182,7 @@ pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone + GeoBBoxable>(
             .0;
 
         out.push(ChunkData {
-            id,
+            id: chunk,
             data: prims,
             cfg,
         });
