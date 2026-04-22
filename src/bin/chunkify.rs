@@ -1,4 +1,4 @@
-use osmrender::chunk_manager::{ChunkConfig, save_chunks};
+use osmrender::chunk_manager::{ChunkConfig, StdFsChunkStorage, save_chunks};
 use osmrender::converter::converti_elementi_osm_posizionati;
 use osmrender::map_elements::MapElement;
 use osmrender::raw_osm_reader::read_raw_osm_file;
@@ -32,7 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("--- Salvataggio chunk ---");
 
-    save_chunks(elementi_mappa, out_dir, cfg)?;
+    let chunk_store = StdFsChunkStorage::new(out_dir);
+
+    save_chunks(elementi_mappa, &chunk_store, cfg)?;
     println!("Done.");
 
     Ok(())

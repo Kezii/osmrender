@@ -4,9 +4,58 @@ use geo::{ConvexHull, Intersects, MultiPoint};
 use log::info;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub trait ChunkStore {}
+pub trait BlobStore {
+    fn load_chunk(&self, id: ChunkId) -> std::io::Result<Vec<MapElement>>;
+    fn save_chunk(&self, id: ChunkId, data: Vec<MapElement>) -> std::io::Result<()>;
+}
+
+pub struct StdFsChunkStorage {
+    root: PathBuf,
+}
+
+impl StdFsChunkStorage {
+    pub fn new(path: &str) -> Self {
+        Self {
+            root: PathBuf::from(path),
+        }
+    }
+}
+
+impl BlobStore for StdFsChunkStorage {
+    fn load_chunk(&self, id: ChunkId) -> std::io::Result<Vec<MapElement>> {
+        let new_path = self.root.join(id.file_name());
+        let bytes = match fs::read(&new_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Chunk not found",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
+
+        let prims: Vec<MapElement> =
+            bincode::decode_from_slice(&bytes, bincode::config::standard())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+                .0;
+        Ok(prims)
+    }
+
+    fn save_chunk(&self, id: ChunkId, data: Vec<MapElement>) -> std::io::Result<()> {
+        fs::create_dir_all(&self.root)?;
+
+        let path = self.root.join(id.file_name());
+        // Più veloce di tante piccole write: serializza in RAM e scrive in un colpo solo.
+        let bytes = bincode::encode_to_vec(&data, bincode::config::standard())
+            .map_err(std::io::Error::other)?;
+        fs::write(&path, bytes)?;
+
+        Ok(())
+    }
+}
 
 pub trait GeoBBoxable {
     fn bbox(&self) -> GeoBBox;
@@ -62,15 +111,10 @@ impl ChunkId {
         }
         .normalized()
     }
-}
 
-fn chunk_size_tag(cfg: ChunkConfig) -> i64 {
-    cfg.chunk_size_m.round() as i64
-}
-
-fn chunk_file_name(id: ChunkId, cfg: ChunkConfig) -> String {
-    // Un solo directory, filename include chunk size per evitare collisioni tra diverse size.
-    format!("c{}_x{}_y{}.bin", chunk_size_tag(cfg), id.x, id.y)
+    pub fn file_name(&self) -> String {
+        format!("c_x{}_y{}.bin", self.x, self.y)
+    }
 }
 
 fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<Item = ChunkId> {
@@ -86,9 +130,7 @@ fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<It
 
     //(min_x..=max_x, min_y..=max_y)
 
-    (min_x..=max_x)
-        .flat_map(move |x| (min_y..=max_y).map(move |y| ChunkId { x, y }))
-        .into_iter()
+    (min_x..=max_x).flat_map(move |x| (min_y..=max_y).map(move |y| ChunkId { x, y }))
 }
 
 /// Salva le primitive geolocalizzate in chunk su disco.
@@ -98,12 +140,9 @@ fn chunk_range_for_bbox(bbox: GeoBBox, cfg: ChunkConfig) -> impl IntoIterator<It
 /// - File per chunk: `dir/c{size}_x{X}_y{Y}.bin`
 pub fn save_chunks(
     elements: impl IntoIterator<Item = MapElement>,
-    dir: &str,
+    store: &impl BlobStore,
     cfg: ChunkConfig,
 ) -> std::io::Result<()> {
-    let root = Path::new(dir);
-    fs::create_dir_all(root)?;
-
     let mut buckets: HashMap<ChunkId, Vec<MapElement>> = HashMap::new();
 
     for p in elements {
@@ -131,11 +170,7 @@ pub fn save_chunks(
                 return Ok(());
             }
 
-            let path = root.join(chunk_file_name(id, cfg));
-            // Più veloce di tante piccole write: serializza in RAM e scrive in un colpo solo.
-            let bytes = bincode::encode_to_vec(&prims, bincode::config::standard())
-                .map_err(std::io::Error::other)?;
-            fs::write(&path, bytes)?;
+            store.save_chunk(id, prims)?;
             Ok(())
         })?;
 
@@ -156,30 +191,20 @@ impl<T: bincode::Decode<()> + Clone + GeoBBoxable> ChunkData<T> {
 
 /// Legge automaticamente tutti i chunk che intersecano `bbox` e ritorna le primitive
 /// contenute dentro `bbox` (filtrate in lat/lon).
-pub fn load_chunks_for_bbox<T: bincode::Decode<()> + Clone + GeoBBoxable>(
-    dir: &str,
+pub fn load_chunks_for_bbox(
+    store: &impl BlobStore,
     bbox: &GeoBBox,
     cfg: ChunkConfig,
-) -> std::io::Result<Vec<ChunkData<T>>> {
-    let root = Path::new(dir);
+) -> std::io::Result<Vec<ChunkData<MapElement>>> {
     let bbox = bbox.clone().normalized();
     let chunks = chunk_range_for_bbox(bbox.clone(), cfg);
 
-    let mut out: Vec<ChunkData<T>> = Vec::new();
+    let mut out: Vec<ChunkData<MapElement>> = Vec::new();
     //let mut seen: HashSet<(u8, i64)> = HashSet::new();
     for chunk in chunks {
         info!("loading chunk {:?}", chunk);
         // Formato: c{size}_x{X}_y{Y}.bin
-        let new_path = root.join(chunk_file_name(chunk, cfg));
-        let bytes = match fs::read(&new_path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
-
-        let prims: Vec<T> = bincode::decode_from_slice(&bytes, bincode::config::standard())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
-            .0;
+        let prims = store.load_chunk(chunk)?;
 
         out.push(ChunkData {
             id: chunk,

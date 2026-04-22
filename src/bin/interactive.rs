@@ -13,7 +13,7 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{GeoPos, renderprocess::RenderState};
+use osmrender::{GeoPos, chunk_manager::StdFsChunkStorage, renderprocess::RenderState};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -83,6 +83,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stackframebuffer = StackFramebuffer::<1920, 1080, Rgb565>::new(Rgb565::BLACK);
 
+    let chunk_store = StdFsChunkStorage::new("chunks");
+
     let spawn_point = GeoPos::new(45.47362, 9.24919);
     let mut should_reload = true;
 
@@ -112,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time_secs = frame_time.as_secs_f64();
 
         if should_reload {
-            render_state.reload_chunks()?;
+            render_state.reload_chunks(&chunk_store)?;
             render_state.map_to_mesh(spawn_point)?;
             should_reload = false;
         }

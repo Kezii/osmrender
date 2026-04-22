@@ -1,4 +1,4 @@
-use crate::chunk_manager::{ChunkConfig, ChunkData, GeoBBoxable, load_chunks_for_bbox};
+use crate::chunk_manager::{BlobStore, ChunkConfig, ChunkData, GeoBBoxable, load_chunks_for_bbox};
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
 use crate::rendering_adapter::{MapToMeshConversionParams, OwnedMeshData};
@@ -113,19 +113,6 @@ impl RenderState {
         (visible_world_height / mapped_world_height).max(1.0)
     }
 
-    fn expanded_bbox_for_loading(&self, bbox: &GeoBBox, viewport: Size) -> GeoBBox {
-        let scale = self.viewport_geo_overscan(viewport) * CHUNK_LOAD_OVERSCAN;
-        let center_lat = (bbox.min.lat() + bbox.max.lat()) * 0.5;
-        let center_lon = (bbox.min.lon() + bbox.max.lon()) * 0.5;
-        let half_lat_span = (bbox.max.lat() - bbox.min.lat()) * 0.5 * scale;
-        let half_lon_span = (bbox.max.lon() - bbox.min.lon()) * 0.5 * scale;
-
-        GeoBBox {
-            min: GeoPos::new(center_lat - half_lat_span, center_lon - half_lon_span),
-            max: GeoPos::new(center_lat + half_lat_span, center_lon + half_lon_span),
-        }
-    }
-
     // the bbox in geo coordinates
     pub fn get_geo_bbox(&self) -> GeoBBox {
         let (visible_width_m, visible_height_m) =
@@ -167,14 +154,15 @@ impl RenderState {
         )
     }
 
-    pub fn reload_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let load_bbox = self.expanded_bbox_for_loading(&self.get_geo_bbox(), self.viewport_size);
-
+    pub fn reload_chunks(
+        &mut self,
+        chunk_store: &impl BlobStore,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let cfg = ChunkConfig {
             chunk_size_m: 2000.0,
         };
 
-        let chunks = load_chunks_for_bbox::<MapElement>("chunks", &load_bbox, cfg)?;
+        let chunks = load_chunks_for_bbox(chunk_store, &self.get_geo_bbox(), cfg)?;
 
         self.chunks = chunks;
 
