@@ -13,7 +13,11 @@ use embedded_graphics_simulator::{
     OutputSettings, SimulatorDisplay, SimulatorEvent, Window, sdl2::Keycode,
 };
 use log::info;
-use osmrender::{GeoPos, chunk_manager::StdFsChunkStorage, renderprocess::RenderState};
+use osmrender::{
+    GeoBBox, GeoPos,
+    chunk_manager::{ChunkConfig, ChunkManager, StdFsChunkStorage},
+    renderprocess::RenderState,
+};
 
 const MOUSE_HISTORY_LEN: usize = 4;
 const INERTIA_FRICTION_PER_FRAME: f64 = 0.90;
@@ -66,9 +70,7 @@ fn flick_velocity_from_history(
     ))
 }
 
-fn geo_delta_per_pixel(render_state: &RenderState, display_size: Size) -> (f64, f64) {
-    let bbox = render_state.get_geo_bbox();
-
+fn geo_delta_per_pixel(bbox: &GeoBBox, display_size: Size) -> (f64, f64) {
     let lon_per_pixel = (bbox.max.lon() - bbox.min.lon()) / display_size.width as f64;
     let lat_per_pixel = (bbox.max.lat() - bbox.min.lat()) / display_size.height as f64;
 
@@ -86,19 +88,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let chunk_store = StdFsChunkStorage::new("chunks");
 
     let spawn_point = GeoPos::new(45.47362, 9.24919);
-    let mut should_reload = true;
 
     let mut text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     text_style.background_color = Some(Rgb565::BLACK);
 
-    let mut render_state = RenderState {
-        spawn_point,
-        current_center: spawn_point,
-        camera_fovy: 0.64,
-        chunks: Vec::new(),
-        mesh_container: Vec::new(),
-        viewport_size: display.size(),
-    };
+    let chunk_manager = ChunkManager::new(
+        chunk_store,
+        ChunkConfig {
+            chunk_size_m: 2000.0,
+        },
+    );
+    let mut render_state = RenderState::new(chunk_manager, spawn_point, display.size());
 
     let mut click_down_point: Option<Point> = None;
     let mut previous_frame_point: VecDeque<Point> = VecDeque::new();
@@ -112,12 +112,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let frame_time = now.duration_since(old_frame);
         old_frame = now;
         let frame_time_secs = frame_time.as_secs_f64();
-
-        if should_reload {
-            render_state.reload_chunks(&chunk_store)?;
-            render_state.map_to_mesh(spawn_point)?;
-            should_reload = false;
-        }
 
         for event in window.events() {
             //info!("Event: {:?}", event);
@@ -133,7 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
                     render_state.zoom(1.0 - scroll_delta.y as f32 * 0.1);
-                    should_reload = true;
                     center_speed = None;
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
@@ -143,7 +136,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     click_down_point = None;
                     previous_frame_point.clear();
-                    should_reload = true;
                 }
                 SimulatorEvent::MouseButtonDown { point, .. } => {
                     click_down_point = Some(point);
@@ -156,15 +148,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let delta = point - previous_point;
                         let display_size = display.size();
                         let (lat_per_pixel, lon_per_pixel) =
-                            geo_delta_per_pixel(&render_state, display_size);
+                            geo_delta_per_pixel(&render_state.get_geo_bbox(), display_size);
 
                         // Durante il pan il punto sotto al cursore deve restare lo stesso,
                         // quindi il centro si muove in senso opposto al delta del mouse.
                         // Il fattore di pan include la porzione realmente visibile tramite camera.
-                        render_state.current_center += GeoPos::new(
+                        render_state.move_center(GeoPos::new(
                             delta.y as f64 * lat_per_pixel,
                             -delta.x as f64 * lon_per_pixel,
-                        );
+                        ));
                         click_down_point = Some(point);
                         center_speed = None;
                         push_mouse_history(&mut previous_frame_point, point);
@@ -176,18 +168,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(current_speed) = center_speed {
             let display_size = display.size();
-            let (lat_per_pixel, lon_per_pixel) = geo_delta_per_pixel(&render_state, display_size);
+            let (lat_per_pixel, lon_per_pixel) =
+                geo_delta_per_pixel(&render_state.get_geo_bbox(), display_size);
 
-            render_state.current_center += GeoPos::new(
+            render_state.move_center(GeoPos::new(
                 current_speed.y * lat_per_pixel,
                 -current_speed.x * lon_per_pixel,
-            );
+            ));
 
             info!("inertia {:?}", current_speed);
             center_speed = current_speed.apply_friction(frame_time_secs);
         }
 
-        stackframebuffer.clear(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3));
+        //stackframebuffer.clear(Rgb565::new(158 >> 3, 157 >> 2, 162 >> 3));
+        stackframebuffer.clear(Rgb565::new(58 >> 3, 105 >> 2, 41 >> 3));
+
+        render_state.update_chunks()?;
 
         let primitives_drawn = render_state
             .renderizza_mappa(&mut stackframebuffer)

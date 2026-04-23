@@ -5,7 +5,12 @@ use embedded_graphics::{
     primitives::Rectangle,
 };
 use image::RgbImage;
-use osmrender::{GeoPos, imageframebuffer::ImageFramebuffer, renderprocess::RenderState};
+use osmrender::{
+    GeoPos,
+    chunk_manager::{ChunkConfig, ChunkManager, StdFsChunkStorage},
+    imageframebuffer::ImageFramebuffer,
+    renderprocess::RenderState,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -36,14 +41,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stackframebuffer = StackFramebuffer::<WIDTH, HEIGHT, Rgb565>::new(Rgb565::BLACK);
 
-    let mut render_state = RenderState {
-        spawn_point: centro,
-        current_center: centro,
-        camera_fovy: 0.64,
-        chunks: Vec::new(),
-        mesh_container: Vec::new(),
-        viewport_size: framebuffer.size(),
-    };
+    let chunk_store = StdFsChunkStorage::new("chunks");
+    let chunk_manager = ChunkManager::new(
+        chunk_store,
+        ChunkConfig {
+            chunk_size_m: 2000.0,
+        },
+    );
+    let mut render_state = RenderState::new(chunk_manager, centro, framebuffer.size());
     render_state.map_to_mesh(centro)?;
     render_state
         .renderizza_mappa(&mut stackframebuffer)

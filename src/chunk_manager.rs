@@ -1,7 +1,7 @@
 use crate::map_elements::MapElement;
 use crate::{GeoBBox, GeoPos};
 use geo::{ConvexHull, Intersects, MultiPoint};
-use log::info;
+use log::{error, info};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -214,4 +214,51 @@ pub fn load_chunks_for_bbox(
     }
 
     Ok(out)
+}
+
+pub struct ChunkManager<T: BlobStore> {
+    store: T,
+    chunks: Vec<ChunkData<MapElement>>,
+    cfg: ChunkConfig,
+}
+
+impl<T: BlobStore> ChunkManager<T> {
+    pub fn new(store: T, cfg: ChunkConfig) -> Self {
+        Self {
+            store,
+            chunks: Vec::new(),
+            cfg,
+        }
+    }
+
+    pub fn get_chunks(&self) -> &[ChunkData<MapElement>] {
+        &self.chunks
+    }
+
+    pub fn request_bbox(&mut self, bbox: GeoBBox) -> bool {
+        let chunks = chunk_range_for_bbox(bbox.clone(), self.cfg);
+
+        for id in chunks {
+            if !self.chunks.iter().any(|c| c.id == id) {
+                info!("loading chunk {:?}", id);
+
+                let chunk_data = self.store.load_chunk(id);
+                if let Ok(chunk_data) = chunk_data {
+                    self.chunks.push(ChunkData {
+                        id,
+                        data: chunk_data,
+                        cfg: self.cfg,
+                    });
+                    self.chunks.retain(|c| bbox.intersects(&c.bbox()));
+
+                    // this function gets called every frame, so we load max 1 chunk at a time
+                    return true;
+                } else {
+                    error!("Failed to load chunk {:?}", id);
+                }
+            }
+        }
+
+        false
+    }
 }

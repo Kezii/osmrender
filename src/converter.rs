@@ -16,6 +16,111 @@ pub struct SpatialNodeData {
     pub tags: Vec<(String, String)>,
 }
 
+fn get_tag_value<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+fn has_paved_surface(tags: &[(String, String)]) -> bool {
+    matches!(
+        get_tag_value(tags, "surface"),
+        Some(
+            "paved"
+                | "asphalt"
+                | "concrete"
+                | "concrete:lanes"
+                | "concrete:plates"
+                | "paving_stones"
+                | "sett"
+                | "cobblestone"
+                | "unhewn_cobblestone"
+                | "metal"
+        )
+    )
+}
+
+fn classify_area_element(tags: &[(String, String)]) -> Option<ElementType> {
+    if tags.iter().any(|(k, _)| k == "building") {
+        return Some(ElementType::Edificio);
+    }
+
+    if tags
+        .iter()
+        .any(|(k, v)| (k == "aeroway" || k == "landuse") && v == "aerodrome")
+    {
+        return Some(ElementType::Aeroporto);
+    }
+
+    if let Some(v) = get_tag_value(tags, "amenity") {
+        match v {
+            "grave_yard" => return Some(ElementType::Cimitero),
+            // Only map amenities that usually read as paved/artificial from above.
+            "parking" | "parking_space" | "parking_entrance" | "bus_station" | "fuel"
+            | "marketplace" => return Some(ElementType::Residenziale),
+            _ => {}
+        }
+    }
+
+    if get_tag_value(tags, "area:highway").is_some()
+        || matches!(get_tag_value(tags, "area"), Some("yes"))
+            && matches!(
+                get_tag_value(tags, "highway"),
+                Some("pedestrian" | "footway" | "cycleway" | "service")
+            )
+    {
+        return Some(ElementType::Residenziale);
+    }
+
+    if let Some(v) = get_tag_value(tags, "leisure") {
+        match v {
+            "park" | "recreation_ground" | "garden" => return Some(ElementType::Parco),
+            "pitch" => return Some(ElementType::CampoSportivo),
+            "swimming_pool" => return Some(ElementType::Acqua),
+            _ => {}
+        }
+    }
+
+    if let Some(v) = get_tag_value(tags, "landuse") {
+        match v {
+            "residential" => return Some(ElementType::Residenziale),
+            "commercial" | "retail" => return Some(ElementType::Commerciale),
+            "industrial" | "railway" | "brownfield" | "construction" | "garages" | "depot"
+            | "port" | "quarry" | "military" | "landfill" => return Some(ElementType::Industriale),
+            "farmland" | "farmyard" | "orchard" | "vineyard" => {
+                return Some(ElementType::Agricolo);
+            }
+            "cemetery" => return Some(ElementType::Cimitero),
+            "basin" | "reservoir" | "salt_pond" => return Some(ElementType::Acqua),
+            "forest" => return Some(ElementType::Foresta),
+            "grass" | "park" | "recreation_ground" => return Some(ElementType::Parco),
+            _ => {}
+        }
+    }
+
+    if let Some(v) = get_tag_value(tags, "natural") {
+        match v {
+            "water" => return Some(ElementType::Acqua),
+            "wood" | "forest" => return Some(ElementType::Foresta),
+            "scrub" => return Some(ElementType::Boscaglia),
+            _ => {}
+        }
+    }
+
+    if let Some(v) = get_tag_value(tags, "man_made") {
+        match v {
+            "works" | "wastewater_plant" | "storage_tank" => {
+                return Some(ElementType::Industriale);
+            }
+            _ => {}
+        }
+    }
+
+    if has_paved_surface(tags) {
+        return Some(ElementType::Residenziale);
+    }
+
+    None
+}
+
 /// Converte un nodo OSM in un elemento della mappa
 pub fn converti_nodo(node_data: &NodeData) -> Option<MapElement> {
     let name = node_data
@@ -90,13 +195,9 @@ pub fn converti_way(
         return None;
     }
 
-    let get_tag = |key: &str| {
-        way_data
-            .tags
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    };
+    let get_tag = |key: &str| get_tag_value(&way_data.tags, key);
+    let is_closed_way =
+        way_data.node_refs.len() >= 4 && way_data.node_refs.first() == way_data.node_refs.last();
     let has_unpaved_surface = matches!(
         get_tag("surface"),
         Some(
@@ -143,160 +244,32 @@ pub fn converti_way(
                 },
             }
         }
-        // Controlla le ferrovie
+        // Controlla le aree chiuse prima della logica lineare per evitare che il fondo "foresta"
+        // resti visibile sotto piazze, parcheggi e altre superfici artificiali.
+        else if is_closed_way {
+            if let Some(element_type) = classify_area_element(&way_data.tags) {
+                MapElement {
+                    id: way_data.id,
+                    vertices: vertices.clone(),
+                    inner_rings: Vec::new(),
+                    element_type,
+                }
+            } else {
+                MapElement {
+                    id: way_data.id,
+                    vertices: vertices.clone(),
+                    inner_rings: Vec::new(),
+                    element_type: ElementType::Altro { is_punto: false },
+                }
+            }
+        }
+        // Controlla le ferrovie lineari
         else if way_data.tags.iter().any(|(k, _)| k == "railway") {
             MapElement {
                 id: way_data.id,
                 vertices: vertices.clone(),
                 inner_rings: Vec::new(),
                 element_type: ElementType::Ferrovia,
-            }
-        }
-        // Controlla gli edifici
-        else if way_data.tags.iter().any(|(k, _)| k == "building") {
-            MapElement {
-                id: way_data.id,
-                vertices: vertices.clone(),
-                inner_rings: Vec::new(),
-                element_type: ElementType::Edificio,
-            }
-        }
-        // Controlla aeroporti (prima di altri landuse)
-        else if way_data
-            .tags
-            .iter()
-            .any(|(k, v)| (k == "aeroway" || k == "landuse") && v == "aerodrome")
-        {
-            MapElement {
-                id: way_data.id,
-                vertices: vertices.clone(),
-                inner_rings: Vec::new(),
-                element_type: ElementType::Aeroporto,
-            }
-        }
-        // Controlla landuse e leisure (residenziale, commerciale, industriale, agricolo, cimitero, parchi)
-        else if let Some((k, v)) = way_data
-            .tags
-            .iter()
-            .find(|(k, _)| k == "landuse" || k == "leisure")
-        {
-            match (k.as_str(), v.as_str()) {
-                // Parchi e aree verdi (priorità alta)
-                ("leisure", "park")
-                | ("leisure", "recreation_ground")
-                | ("landuse", "recreation_ground")
-                | ("landuse", "park")
-                | ("leisure", "garden")
-                | ("landuse", "grass") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Parco,
-                },
-                // Altri landuse
-                ("landuse", "residential") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Residenziale,
-                },
-                ("landuse", "commercial") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Commerciale,
-                },
-                ("landuse", "industrial") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Industriale,
-                },
-                ("landuse", "farmland") | ("landuse", "farmyard") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Agricolo,
-                },
-                ("landuse", "cemetery") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Cimitero,
-                },
-                // Acqua da landuse
-                ("landuse", "basin") | ("landuse", "reservoir") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Acqua,
-                },
-                // Foreste da landuse
-                ("landuse", "forest") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Foresta,
-                },
-                // Campi sportivi
-                ("leisure", "pitch") => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::CampoSportivo,
-                },
-                _ => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Altro { is_punto: false },
-                },
-            }
-        }
-        // Controlla l'acqua da natural (dopo landuse/leisure)
-        else if let Some(v) = get_tag("natural") {
-            match v {
-                "water" => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Acqua,
-                },
-                "wood" => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Foresta,
-                },
-                "scrub" => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Boscaglia,
-                },
-                _ => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Altro { is_punto: false },
-                },
-            }
-        }
-        // Controlla acqua da leisure (piscine)
-        else if let Some(v) = get_tag("leisure") {
-            match v {
-                "swimming_pool" => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Acqua,
-                },
-                _ => MapElement {
-                    id: way_data.id,
-                    vertices: vertices.clone(),
-                    inner_rings: Vec::new(),
-                    element_type: ElementType::Altro { is_punto: false },
-                },
             }
         }
         // Controlla le strade
@@ -614,37 +587,8 @@ fn converti_multipolygon(
         .collect();
 
     // Determina il tipo di elemento in base ai tag della relazione
-    let element_type = {
-        if relation_data.tags.iter().any(|(k, _)| k == "building") {
-            ElementType::Edificio
-        } else if relation_data.tags.iter().any(|(k, _)| k == "leisure") {
-            if relation_data
-                .tags
-                .iter()
-                .any(|(k, v)| k == "leisure" && v == "park")
-            {
-                ElementType::Parco
-            } else {
-                ElementType::Altro { is_punto: false }
-            }
-        } else if relation_data.tags.iter().any(|(k, _)| k == "landuse") {
-            match relation_data.tags.iter().find(|(k, _)| k == "landuse") {
-                Some((_, v)) if v == "residential" => ElementType::Residenziale,
-                Some((_, v)) if v == "commercial" => ElementType::Commerciale,
-                Some((_, v)) if v == "industrial" => ElementType::Industriale,
-                Some((_, v)) if v == "farmland" || v == "agricultural" => ElementType::Agricolo,
-                _ => ElementType::Altro { is_punto: false },
-            }
-        } else if relation_data.tags.iter().any(|(k, _)| k == "natural") {
-            match relation_data.tags.iter().find(|(k, _)| k == "natural") {
-                Some((_, v)) if v == "water" => ElementType::Acqua,
-                Some((_, v)) if v == "wood" || v == "forest" => ElementType::Foresta,
-                _ => ElementType::Altro { is_punto: false },
-            }
-        } else {
-            ElementType::Altro { is_punto: false }
-        }
-    };
+    let element_type = classify_area_element(&relation_data.tags)
+        .unwrap_or(ElementType::Altro { is_punto: false });
 
     // Crea un MapElement con i buchi
     Some(MapElement {

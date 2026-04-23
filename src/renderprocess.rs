@@ -1,4 +1,4 @@
-use crate::chunk_manager::{BlobStore, ChunkConfig, ChunkData, GeoBBoxable, load_chunks_for_bbox};
+use crate::chunk_manager::{BlobStore, ChunkManager, GeoBBoxable};
 use crate::map_elements::{ElementType, MapElement};
 use crate::raw_osm_reader::{RawOsmData, RelationMemberType};
 use crate::rendering_adapter::{MapToMeshConversionParams, OwnedMeshData};
@@ -16,7 +16,6 @@ const SHOW_CHUNK_BORDERS: bool = true;
 pub const MAP_SCALE_FACTOR: f32 = 0.001;
 pub const CAMERA_DISTANCE: f32 = 2.0;
 //pub const CAMERA_FOVY: f32 = std::f32::consts::PI / 6.0;
-const CHUNK_LOAD_OVERSCAN: f64 = 1.05;
 
 /// Calcola la distanza in metri tra due coordinate geografiche usando la formula di Haversine
 fn distanza_geografica(point1: GeoPos, point2: GeoPos) -> f64 {
@@ -66,18 +65,37 @@ fn bbox_for_viewport(centro: GeoPos, raggio_metri: f64, viewport: Size) -> GeoBB
     }
 }
 
-pub struct RenderState {
-    pub chunks: Vec<ChunkData<MapElement>>,
+pub struct RenderState<T: BlobStore> {
+    pub chunk_manager: ChunkManager<T>,
     pub mesh_container: Vec<OwnedMeshData>,
     pub viewport_size: Size,
-    pub camera_fovy: f32,
-    pub spawn_point: GeoPos,
-    pub current_center: GeoPos,
+    camera_fovy: f32,
+    spawn_point: GeoPos,
+    current_center: GeoPos,
 }
 
-impl RenderState {
+impl<T: BlobStore> RenderState<T> {
+    pub fn new(chunk_manager: ChunkManager<T>, spawn_point: GeoPos, viewport_size: Size) -> Self {
+        RenderState {
+            spawn_point,
+            current_center: spawn_point,
+            camera_fovy: 0.64,
+            chunk_manager,
+            mesh_container: Vec::new(),
+            viewport_size,
+        }
+    }
+
     pub fn zoom(&mut self, zoom_factor: f32) {
         self.camera_fovy *= zoom_factor;
+    }
+
+    pub fn set_center(&mut self, center: GeoPos) {
+        self.current_center = center;
+    }
+
+    pub fn move_center(&mut self, delta: GeoPos) {
+        self.current_center += delta;
     }
 
     /// Returns the visible span along the map plane's `y` axis where the camera
@@ -154,23 +172,9 @@ impl RenderState {
         )
     }
 
-    pub fn reload_chunks(
-        &mut self,
-        chunk_store: &impl BlobStore,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let cfg = ChunkConfig {
-            chunk_size_m: 2000.0,
-        };
-
-        let chunks = load_chunks_for_bbox(chunk_store, &self.get_geo_bbox(), cfg)?;
-
-        self.chunks = chunks;
-
-        Ok(())
-    }
-
     pub fn get_chunk_borders(&self) -> impl Iterator<Item = MapElement> {
-        self.chunks
+        self.chunk_manager
+            .get_chunks()
             .iter()
             .map(|c| c.bbox())
             .enumerate()
@@ -191,6 +195,14 @@ impl RenderState {
             })
     }
 
+    pub fn update_chunks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let changed = self.chunk_manager.request_bbox(self.get_geo_bbox());
+        if changed {
+            self.map_to_mesh(self.spawn_point)?;
+        }
+        Ok(())
+    }
+
     pub fn map_to_mesh(&mut self, spawn_point: GeoPos) -> Result<(), Box<dyn std::error::Error>> {
         let params = MapToMeshConversionParams {
             center_offset: spawn_point,
@@ -201,7 +213,8 @@ impl RenderState {
         };
 
         let mut mesh_container: Vec<OwnedMeshData> = self
-            .chunks
+            .chunk_manager
+            .get_chunks()
             .iter()
             .flat_map(|e| e.data.iter())
             .unique_by(|m| m.id)
@@ -223,7 +236,7 @@ impl RenderState {
 
     /// Renderizza la mappa degli elementi ad alto livello nel raggio specificato
     pub fn renderizza_mappa<D: GFX2DCanvas<Color = embedded_graphics_core::pixelcolor::Rgb565>>(
-        &self,
+        &mut self,
         framebuffer: &mut D,
     ) -> Result<usize, DrawError> {
         // Crea l'engine 3D
